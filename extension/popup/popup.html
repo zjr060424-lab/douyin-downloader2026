@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>dydownload</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>dydownload</h1>
+      <span class="subtitle">Cookie 助手</span>
+    </div>
+
+    <div class="section">
+      <div class="section-title">服务状态</div>
+      <div class="status-row">
+        <span class="status-dot" id="serverDot"></span>
+        <span id="serverStatus">检测中...</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">Cookie 状态</div>
+      <div class="cookie-count">
+        <span id="cookieCount">--</span> 个 Cookie
+      </div>
+      <div class="cookie-checklist" id="cookieChecklist">
+        <div class="cookie-item" data-key="ttwid">
+          <span class="check-icon">-</span> ttwid
+        </div>
+        <div class="cookie-item" data-key="sessionid">
+          <span class="check-icon">-</span> sessionid
+        </div>
+        <div class="cookie-item" data-key="passport_csrf_token">
+          <span class="check-icon">-</span> passport_csrf_token
+        </div>
+        <div class="cookie-item" data-key="s_v_web_id">
+          <span class="check-icon">-</span> s_v_web_id
+        </div>
+        <div class="cookie-item" data-key="odin_tt">
+          <span class="check-icon">-</span> odin_tt
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">上次推送</div>
+      <div id="lastPush">从未推送</div>
+    </div>
+
+    <div class="section">
+      <div class="section-title">下载视频</div>
+      <input type="text" id="videoUrl" class="url-input" placeholder="视频 URL 或自动检测当前标签页...">
+      <button id="btnDownload" class="btn btn-download">下载无水印视频</button>
+      <div id="downloadStatus" class="download-status hidden"></div>
+    </div>
+
+    <div class="actions">
+      <button id="btnPush" class="btn btn-primary">推送到 CLI</button>
+      <button id="btnCopy" class="btn btn-secondary">复制 Cookie</button>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
