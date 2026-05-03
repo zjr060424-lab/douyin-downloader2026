@@ -38,6 +38,27 @@ app = typer.Typer(
 console = Console()
 
 
+def _extract_url(text: str) -> str:
+    """Extract a douyin URL from messy share text.
+
+    Handles:
+      - Clean URLs: https://v.douyin.com/xxx/
+      - App share text: "5.66 PXM:/ ... https://v.douyin.com/xxx/ 复制此链接..."
+    Returns the first matching douyin URL, or the original text if none found.
+    """
+    import re
+    patterns = [
+        r'https?://v\.douyin\.com/\S+',
+        r'https?://www\.douyin\.com/video/\d+',
+        r'https?://www\.iesdouyin\.com/share/video/\d+',
+    ]
+    for p in patterns:
+        m = re.search(p, text)
+        if m:
+            return m.group(0).rstrip('/')
+    return text
+
+
 def _find_ytdlp() -> str:
     """Find yt-dlp executable."""
     # Check custom path first
@@ -257,6 +278,21 @@ def test(
     freshness = probe_cookie_freshness(cookie_str)
     console.print(f"[dim]Cookie 状态: {freshness}[/dim]")
 
+    url = _extract_url(url)
+
+    if "v.douyin.com" in url:
+        console.print(f"[dim]解析短链接: {url}[/dim]")
+        try:
+            import httpx
+            with httpx.Client(timeout=15.0, follow_redirects=False) as client:
+                resp = client.get(url)
+                if resp.status_code in (301, 302):
+                    url = resp.headers.get("Location", url)
+                    console.print(f"[dim] → {url[:80]}...[/dim]")
+        except Exception as e:
+            console.print(f"[red][!] 短链接解析失败: {e}[/red]")
+            raise typer.Exit(1)
+
     # ── Extract video ID ──
     video_id = ""
     m = re.search(r"video/(\d+)", url)
@@ -402,6 +438,7 @@ def download(
     console.print(f"[dim]Cookie 状态: {freshness}[/dim]")
 
     # ── Resolve short link ──
+    url = _extract_url(url)
     if "v.douyin.com" in url:
         console.print(f"[dim]解析短链接: {url}[/dim]")
         try:

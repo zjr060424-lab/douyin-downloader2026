@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 dydownload = "dydownload.cli:app"
+dydownload-gui = "dydownload.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

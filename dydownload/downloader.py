@@ -24,6 +24,7 @@ def download_video(
     headers: dict[str, str] | None = None,
     chunk_size: int = 1024 * 1024,
     max_retries: int = 3,
+    progress_callback: callable = None,
 ) -> Path:
     """Download a video with streaming, progress display, and resume support.
 
@@ -108,6 +109,8 @@ def download_video(
                                 f.write(chunk)
                                 downloaded_bytes += len(chunk)
                                 progress.update(task_id, completed=downloaded_bytes)
+                                if progress_callback:
+                                    progress_callback(downloaded_bytes, total_size)
 
             # Verify file size
             if total_size > 0:
@@ -124,6 +127,8 @@ def download_video(
                 part_path.rename(output_path)
 
             console.print(f"[green]✓ 下载完成: {output_path}")
+            if progress_callback:
+                progress_callback(downloaded_bytes, total_size or downloaded_bytes, "done")
             return output_path
 
         except (httpx.RequestError, httpx.HTTPStatusError) as e:

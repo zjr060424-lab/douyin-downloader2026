@@ -1,51 +1,42 @@
 === dydownload 抖音无水印视频下载工具 使用说明 ===
 
-【环境要求】
-- Windows 10/11
-- Chrome 或 Edge 浏览器
-- conda 环境 dydownload (Python 3.10)
+【给普通用户的简易方式】
 
-【方式一：浏览器一键下载（推荐）】
+1. 双击运行 dist/dydownload.exe，出现窗口后服务自动启动
 
-1. 启动后端服务（终端运行，保持不关）：
-   conda run -n dydownload python -m dydownload.cli serve
+2. 在浏览器中打开抖音 (douyin.com) 并登录
 
-2. 加载浏览器扩展：
-   - 打开 Chrome，地址栏输入 chrome://extensions
-   - 打开「开发者模式」开关
-   - 点击「加载已解压的扩展」
-   - 选择 extension/ 目录
+3. 安装浏览器扩展（给 Chrome/Edge 浏览器）：
+   - 地址栏输入 chrome://extensions，打开「开发者模式」
+   - 点击「加载已解压的扩展」，选择 extension/ 目录
 
-3. 登录抖音：
-   - 浏览器打开 douyin.com 并登录
+4. 点击浏览器工具栏的 dydownload 插件图标，点「推送到 CLI」
+   （之后每 5 分钟会自动推送，不需要重复操作）
 
-4. 推送 Cookie：
-   - 点击浏览器工具栏的 dydownload 插件图标
-   - 点击「推送到 CLI」
+5. 下载视频（两种方式任选）：
+   a) 浏览抖音视频 → 点插件图标 → 地址已自动填好 → 点「下载无水印视频」
+   b) 复制视频链接 → 粘贴到 dydownload.exe 窗口的输入框 → 点「下载」
 
-5. 下载视频：
-   - 浏览任意抖音视频页面
-   - 点击插件图标，地址栏已自动填好当前视频链接
-   - 点击「下载无水印视频」
-   - 等待下载完成，文件保存到 downloads/ 目录
+6. 下载的视频保存在：用户目录/Downloads/dydownload/
 
-【方式二：终端命令行】
+【给开发者的命令行方式】
 
-cd e:\little_project\dydownload
-conda run -n dydownload python -m dydownload.cli download "视频链接"
+环境要求：conda 环境 dydownload (Python 3.10)
 
-支持三种链接格式：
-  - 短链接：v.douyin.com/xxxxx
-  - 完整链接：douyin.com/video/xxxxx
-  - 分享链接：iesdouyin.com/share/video/xxxxx
+启动后端服务：
+  conda run -n dydownload python -m dydownload.cli serve
 
-【其他命令】
+下载单个视频：
+  conda run -n dydownload python -m dydownload.cli download "视频链接"
 
 查看 Cookie 状态：
   conda run -n dydownload python -m dydownload.cli status
 
-只查看视频信息不下载：
+测试 a_bogus 签名：
   conda run -n dydownload python -m dydownload.cli test "视频链接"
+
+重新打包 exe（修改源码后）：
+  conda run -n dydownload pyinstaller dydownload.spec --distpath ./dist --workpath ./build --noconfirm
 
 【常见问题】
 
@@ -56,7 +47,7 @@ Q: 下载提示视频不可用？
 A: 视频可能已删除或设为私密，换一个视频试试。
 
 Q: 插件显示「CLI 未启动」？
-A: 终端还没运行 serve 命令，或服务已停止，重新运行即可。
+A: dydownload.exe 还没打开，或已关闭，重新双击运行即可。
 
 Q: 文件保存在哪？
-A: e:\little_project\dydownload\downloads\
+A: C:\Users\你的用户名\Downloads\dydownload\

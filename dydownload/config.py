@@ -16,7 +16,19 @@ NETSCAPE_COOKIE_FILE = COOKIE_DIR / "cookies_netscape.txt"
 YTDLP_PATH = "yt-dlp"  # Look up from PATH first
 
 # Download defaults
-DOWNLOAD_DIR = Path.cwd() / "downloads"
+def _default_download_dir() -> Path:
+    """Return the default download directory.
+
+    When packaged as exe (frozen), use the exe's directory.
+    When running from source, use the current working directory.
+    """
+    import sys
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).parent / "downloads"
+    return Path.cwd() / "downloads"
+
+
+DOWNLOAD_DIR = _default_download_dir()
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 # Douyin endpoints
