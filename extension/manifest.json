@@ -11,7 +11,9 @@
   "host_permissions": [
     "*://*.douyin.com/*",
     "*://*.iesdouyin.com/*",
-    "*://*.douyinvod.com/*"
+    "*://*.douyinvod.com/*",
+    "*://*.bilibili.com/*",
+    "*://*.b23.tv/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",
@@ -22,7 +24,11 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.douyin.com/*"],
+      "matches": [
+        "*://*.douyin.com/*",
+        "*://*.bilibili.com/*",
+        "*://*.b23.tv/*"
+      ],
       "js": ["content/content.js"],
       "run_at": "document_idle"
     }

@@ -33,25 +33,9 @@ console = Console()
 
 
 def _extract_url(text: str) -> str:
-    """Extract a douyin URL from messy share text.
-
-    Handles:
-      - Clean URLs: https://v.douyin.com/xxx/
-      - App share text: "5.66 PXM:/ ... https://v.douyin.com/xxx/ 复制此链接..."
-      - Image posts:   https://www.douyin.com/note/{id}
-    Returns the first matching douyin URL, or the original text if none found.
-    """
-    import re
-    patterns = [
-        r'https?://v\.douyin\.com/\S+',
-        r'https?://www\.douyin\.com/(?:video|note)/\d+',
-        r'https?://www\.iesdouyin\.com/share/video/\d+',
-    ]
-    for p in patterns:
-        m = re.search(p, text)
-        if m:
-            return m.group(0).rstrip('/')
-    return text
+    """Extract a supported platform URL from share text."""
+    from dydownload.pipeline import extract_url
+    return extract_url(text)
 
 
 def _find_ytdlp() -> str:
@@ -273,36 +257,80 @@ def test(
 
 @app.command()
 def download(
-    url: str = typer.Argument(..., help="抖音视频或图集链接"),
+    url: str = typer.Argument(..., help="抖音视频/图集 或 B 站视频链接"),
     output: str = typer.Option("./downloads", help="下载目录"),
-    no_watermark: bool = typer.Option(True, help="下载无水印版本（默认开启）"),
+    no_watermark: bool = typer.Option(True, help="下载无水印版本（默认开启，抖音用）"),
+    platform: str = typer.Option(
+        "auto", "--platform", help="平台: auto / douyin / bilibili",
+    ),
+    quality: int = typer.Option(
+        80, "--quality", help="B 站画质 (qn): 80=1080p, 112=1080p+, 116=1080p60, 120=4K",
+    ),
+    prefer_dash: bool = typer.Option(
+        True, "--prefer-dash/--no-dash", help="B 站优先 DASH 流（默认开）",
+    ),
+    parts: str = typer.Option(
+        "all", "--parts", help="B 站多 P 处理: all / first",
+    ),
+    mux: bool = typer.Option(
+        True, "--mux/--no-mux", help="B 站 DASH 下载后用 ffmpeg 自动合流",
+    ),
 ):
-    """下载单个抖音视频或图集。
+    """下载抖音视频/图集 或 B 站普通视频。
 
-    支持短链接 (v.douyin.com)、完整视频链接 (douyin.com/video/{id})、
-    图文/图集链接 (douyin.com/note/{id}) 和分享链接 (iesdouyin.com/share/video/{id})。
-    使用自研 a_bogus 签名直接调用抖音 API。
+    抖音：短链接、完整视频链接、图文/图集、分享链接，自动 a_bogus 签名。
+    B 站：bilibili.com/video/BV... 或 b23.tv 短链接；自动 WBI 签名。
+    番剧(bangumi)暂不支持。
     """
     from dydownload.pipeline import (
+        BangumiNotSupportedError,
+        BilibiliCookieExpiredError,
         CookieExpiredError as PipelineCookieExpiredError,
         DouyinAPIError as PipelineDouyinAPIError,
         VideoNotFoundError as PipelineVideoNotFoundError,
-        download_aweme,
+        detect_platform,
+        download_media,
     )
 
     console.print()
-    console.print(Panel.fit("[bold blue]dydownload — 抖音无水印下载[/bold blue]", border_style="blue"))
+    console.print(Panel.fit("[bold blue]dydownload — 多平台下载[/bold blue]", border_style="blue"))
     console.print()
 
-    # ── Load cookies ──
-    cookie_info = load_cookies()
+    # ── Platform auto-detect (only used for informative messages; download_media
+    #    resolves the platform itself when ``platform=="auto"``)
+    if platform == "auto":
+        try:
+            platform = detect_platform(url)
+        except ValueError as e:
+            console.print(f"[red][!] {e}[/red]")
+            raise typer.Exit(1)
+        console.print(f"[dim]自动识别平台: {platform}[/dim]")
+    platform = platform.lower()
+
+    # ── Load cookies (per platform) ──
+    if platform == "bilibili":
+        from dydownload.cookie_manager import (
+            load_bilibili_cookies,
+            probe_cookie_freshness as _probe_fresh,
+        )
+        cookie_info = load_bilibili_cookies()
+        ck_missing_hint = "请在浏览器中登录 B 站后点插件图标推送 Cookie (SESSDATA/bili_jct/buvid3)"
+    else:
+        from dydownload.cookie_manager import probe_cookie_freshness as _probe_fresh
+        cookie_info = load_cookies()
+        ck_missing_hint = "请在浏览器中登录抖音后点插件图标推送 Cookie"
+
     if cookie_info.status == CookieStatus.MISSING:
-        console.print("[red][!] 未找到 Cookie[/red]")
-        console.print("[yellow]请在浏览器中登录抖音后点插件图标推送 Cookie[/yellow]")
+        console.print(f"[red][!] 未找到 {platform} 的 Cookie[/red]")
+        console.print(f"[yellow]{ck_missing_hint}[/yellow]")
         raise typer.Exit(1)
 
     cookie_str = cookie_info.cookie_string
-    freshness = probe_cookie_freshness(cookie_str)
+    try:
+        freshness = _probe_fresh(cookie_str, platform=platform)
+    except TypeError:
+        # Backwards compat — older probe signature
+        freshness = _probe_fresh(cookie_str)
     console.print(f"[dim]Cookie 状态: {freshness}[/dim]")
 
     # ── Run the shared pipeline ──
@@ -313,16 +341,31 @@ def download(
         if name == "phase":
             console.print(f"[dim][*] {payload}[/dim]")
         elif name == "info":
-            mt = payload.get("media_type", "video")
+            mt = payload.get("media_type")
             if mt == "image":
                 console.print(
                     f"[green]✓ 检测到图文/图集[/green] "
                     f"[dim]({payload['image_count']} 张图片, "
                     f"BGM: {'有' if payload['has_bgm'] else '无'})[/dim]"
                 )
-            console.print(f"[dim]作者: @{payload['author']} ({payload['nickname']})[/dim]")
-            if payload.get("desc"):
-                console.print(f"[dim]描述: {payload['desc'][:80]}[/dim]")
+            elif payload.get("platform") == "bilibili":
+                console.print(
+                    f"[green]✓ B 站视频[/green] "
+                    f"[dim]({payload.get('pages', 1)} P, "
+                    f"{payload.get('width', '?')}x{payload.get('height', '?')}, "
+                    f"~{payload.get('duration', 0)}s)[/dim]"
+                )
+                console.print(f"[dim]作者: @{payload['author']}[/dim]")
+                console.print(f"[dim]标题: {payload['title'][:80]}[/dim]")
+            else:
+                console.print(f"[dim]作者: @{payload.get('author', '')} ({payload.get('nickname', '')})[/dim]")
+                if payload.get("desc"):
+                    console.print(f"[dim]描述: {payload['desc'][:80]}[/dim]")
+        elif name == "part":
+            console.print(
+                f"[bold]→ 分 P {payload['index']}/{payload['total']}: "
+                f"{payload.get('title', '')}[/bold]"
+            )
         elif name == "file":
             status = payload["status"]
             name_ = payload["name"]
@@ -352,9 +395,35 @@ def download(
                     f"{img.size_bytes / 1024 / 1024:.1f} MB)[/dim]"
                 )
                 console.print(f"[dim]{img.folder}[/dim]")
+            elif payload.bilibili:
+                bili = payload.bilibili
+                size_mb = bili.size_bytes / 1024 / 1024
+                console.print()
+                console.print(
+                    f"[bold green]✓ B 站下载完成[/bold green] "
+                    f"[dim]({len(bili.parts)} 个文件, {size_mb:.1f} MB)[/dim]"
+                )
+                for part in bili.parts:
+                    console.print(f"[dim]  {part.output_path.name}[/dim]")
 
     try:
-        download_aweme(url, cookie_str, output_dir=output_dir, on_event=on_event)
+        download_media(
+            url,
+            cookie_str,
+            output_dir=output_dir,
+            on_event=on_event,
+            platform=platform,
+            qn=quality,
+            prefer_dash=prefer_dash,
+            multi_part_mode=parts,
+            mux=mux,
+        )
+    except BangumiNotSupportedError as e:
+        console.print(f"[red][!] {e}[/red]")
+        raise typer.Exit(1)
+    except BilibiliCookieExpiredError:
+        console.print("[red][!] B 站 Cookie 过期或不完整，请重新登录并推送 SESSDATA[/red]")
+        raise typer.Exit(1)
     except PipelineCookieExpiredError:
         console.print("[red][!] Cookie 已过期，请重新推送[/red]")
         raise typer.Exit(1)

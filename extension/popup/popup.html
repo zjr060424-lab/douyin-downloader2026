@@ -10,7 +10,7 @@
   <div class="container">
     <div class="header">
       <h1>dydownload</h1>
-      <span class="subtitle">Cookie 助手</span>
+      <span class="subtitle">抖音 + B 站 Cookie 助手</span>
     </div>
 
     <div class="section">
@@ -24,23 +24,37 @@
     <div class="section">
       <div class="section-title">Cookie 状态</div>
       <div class="cookie-count">
-        <span id="cookieCount">--</span> 个 Cookie
+        抖音: <span id="douyinCount">--</span> 个 ·
+        B 站: <span id="biliCount">--</span> 个
       </div>
-      <div class="cookie-checklist" id="cookieChecklist">
-        <div class="cookie-item" data-key="ttwid">
+      <div class="cookie-checklist" id="douyinChecklist">
+        <div class="platform-label">抖音</div>
+        <div class="cookie-item" data-platform="douyin" data-key="ttwid">
           <span class="check-icon">-</span> ttwid
         </div>
-        <div class="cookie-item" data-key="sessionid">
+        <div class="cookie-item" data-platform="douyin" data-key="sessionid">
           <span class="check-icon">-</span> sessionid
         </div>
-        <div class="cookie-item" data-key="passport_csrf_token">
+        <div class="cookie-item" data-platform="douyin" data-key="passport_csrf_token">
           <span class="check-icon">-</span> passport_csrf_token
         </div>
-        <div class="cookie-item" data-key="s_v_web_id">
+        <div class="cookie-item" data-platform="douyin" data-key="s_v_web_id">
           <span class="check-icon">-</span> s_v_web_id
         </div>
-        <div class="cookie-item" data-key="odin_tt">
+        <div class="cookie-item" data-platform="douyin" data-key="odin_tt">
           <span class="check-icon">-</span> odin_tt
+        </div>
+      </div>
+      <div class="cookie-checklist" id="biliChecklist">
+        <div class="platform-label">B 站</div>
+        <div class="cookie-item" data-platform="bili" data-key="SESSDATA">
+          <span class="check-icon">-</span> SESSDATA
+        </div>
+        <div class="cookie-item" data-platform="bili" data-key="bili_jct">
+          <span class="check-icon">-</span> bili_jct
+        </div>
+        <div class="cookie-item" data-platform="bili" data-key="buvid3">
+          <span class="check-icon">-</span> buvid3
         </div>
       </div>
     </div>
@@ -51,8 +65,39 @@
     </div>
 
     <div class="section">
-      <div class="section-title">下载视频</div>
+      <div class="section-title">下载</div>
       <input type="text" id="videoUrl" class="url-input" placeholder="视频 URL 或自动检测当前标签页...">
+      <div class="download-opts">
+        <label>平台
+          <select id="platform">
+            <option value="auto">自动</option>
+            <option value="douyin">抖音</option>
+            <option value="bilibili">Bilibili</option>
+          </select>
+        </label>
+        <label>画质
+          <select id="quality">
+            <option value="80" selected>1080p</option>
+            <option value="112">1080p+</option>
+            <option value="116">1080p60</option>
+            <option value="120">4K</option>
+            <option value="64">720p</option>
+            <option value="32">480p</option>
+          </select>
+        </label>
+        <label>多 P
+          <select id="parts">
+            <option value="all" selected>全部</option>
+            <option value="first">仅第一 P</option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="preferDash" checked> 优先 DASH
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" id="mux" checked> ffmpeg 合流
+        </label>
+      </div>
       <button id="btnDownload" class="btn btn-download">下载无水印视频</button>
       <div id="downloadStatus" class="download-status hidden"></div>
     </div>

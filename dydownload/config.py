@@ -11,6 +11,9 @@ SERVER_PORTS = list(range(18921, 18926))
 COOKIE_DIR = Path.home() / ".dydownload"
 COOKIE_FILE = COOKIE_DIR / "cookies.txt"
 NETSCAPE_COOKIE_FILE = COOKIE_DIR / "cookies_netscape.txt"
+# Bilibili uses a separate file so SESSDATA / bili_jct / buvid3 don't get mixed
+# in with the Douyin cookie blob.
+BILI_COOKIE_FILE = COOKIE_DIR / "cookies.bilibili.txt"
 
 # Path to yt-dlp executable
 YTDLP_PATH = "yt-dlp"  # Look up from PATH first
@@ -45,6 +48,13 @@ KEY_COOKIE_NAMES = [
     "passport_csrf_token",
     "s_v_web_id",
     "odin_tt",
+]
+
+# Bilibili key cookies
+KEY_COOKIE_NAMES_BILI = [
+    "SESSDATA",
+    "bili_jct",
+    "buvid3",
 ]
 
 # User-agent pool

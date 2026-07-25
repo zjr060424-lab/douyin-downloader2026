@@ -1,10 +1,12 @@
-// dydownload popup script
+// dydownload popup script — supports 抖音 and B 站.
 
-const KEY_COOKIES = ['ttwid', 'sessionid', 'passport_csrf_token', 's_v_web_id', 'odin_tt'];
+const DOUYIN_KEYS = ['ttwid', 'sessionid', 'passport_csrf_token', 's_v_web_id', 'odin_tt'];
+const BILI_KEYS = ['SESSDATA', 'bili_jct', 'buvid3'];
 
 const $serverDot = document.getElementById('serverDot');
 const $serverStatus = document.getElementById('serverStatus');
-const $cookieCount = document.getElementById('cookieCount');
+const $douyinCount = document.getElementById('douyinCount');
+const $biliCount = document.getElementById('biliCount');
 const $lastPush = document.getElementById('lastPush');
 const $btnPush = document.getElementById('btnPush');
 const $btnCopy = document.getElementById('btnCopy');
@@ -13,19 +15,20 @@ const $toast = document.getElementById('toast');
 const $videoUrl = document.getElementById('videoUrl');
 const $btnDownload = document.getElementById('btnDownload');
 const $downloadStatus = document.getElementById('downloadStatus');
+const $platform = document.getElementById('platform');
+const $quality = document.getElementById('quality');
+const $preferDash = document.getElementById('preferDash');
+const $parts = document.getElementById('parts');
+const $mux = document.getElementById('mux');
 
 const DOWNLOAD_URL = 'http://127.0.0.1:18921/download';
 const DOWNLOAD_STATUS_URL = 'http://127.0.0.1:18921/download/status/';
-
-// ---- Init ----
 
 document.addEventListener('DOMContentLoaded', async () => {
   await refreshStatus();
   checkServer();
   detectCurrentTabUrl();
 });
-
-// ---- Server Check ----
 
 async function checkServer() {
   try {
@@ -43,40 +46,39 @@ async function checkServer() {
   }
 }
 
-// ---- Cookie Status ----
-
 async function refreshStatus() {
   try {
     const response = await chrome.runtime.sendMessage({ action: 'getCookies' });
     if (!response || !response.success) {
-      $cookieCount.textContent = '0';
-      updateChecklist([]);
+      $douyinCount.textContent = '0';
+      $biliCount.textContent = '0';
+      updateChecklist('douyin', new Set());
+      updateChecklist('bili', new Set());
       return;
     }
+    const douyin = response.douyin || { cookies: [], count: 0 };
+    const bili = response.bilibili || { cookies: [], count: 0 };
+    $douyinCount.textContent = douyin.count;
+    $biliCount.textContent = bili.count;
+    updateChecklist('douyin', new Set(douyin.cookies.map(c => c.name)));
+    updateChecklist('bili', new Set(bili.cookies.map(c => c.name)));
 
-    const cookies = response.cookies || [];
-    $cookieCount.textContent = cookies.length;
-
-    // Update checklist
-    const foundNames = new Set(cookies.map(c => c.name));
-    updateChecklist(foundNames);
-
-    // Read last push time from storage
     const storage = await chrome.storage.local.get('lastPushTime');
     if (storage.lastPushTime) {
       const ago = Math.round((Date.now() - storage.lastPushTime) / 1000);
       $lastPush.textContent = ago < 60 ? `${ago} 秒前` : `${Math.round(ago / 60)} 分钟前`;
     }
   } catch (err) {
-    $cookieCount.textContent = '--';
+    $douyinCount.textContent = '--';
+    $biliCount.textContent = '--';
   }
 }
 
-function updateChecklist(foundNames) {
-  document.querySelectorAll('.cookie-item').forEach(item => {
-    const key = item.dataset.key;
+function updateChecklist(platform, foundNames) {
+  const items = document.querySelectorAll(`.cookie-item[data-platform="${platform}"]`);
+  items.forEach(item => {
     const icon = item.querySelector('.check-icon');
-    if (foundNames.has(key)) {
+    if (foundNames.has(item.dataset.key)) {
       icon.textContent = '✓';
       icon.className = 'check-icon ok';
     } else {
@@ -86,12 +88,9 @@ function updateChecklist(foundNames) {
   });
 }
 
-// ---- Button Handlers ----
-
 $btnPush.addEventListener('click', async () => {
   $btnPush.textContent = '推送中...';
   $btnPush.disabled = true;
-
   try {
     await chrome.runtime.sendMessage({ action: 'pushNow' });
     await chrome.storage.local.set({ lastPushTime: Date.now() });
@@ -109,35 +108,50 @@ $btnPush.addEventListener('click', async () => {
 $btnCopy.addEventListener('click', async () => {
   try {
     const response = await chrome.runtime.sendMessage({ action: 'getCookies' });
-    if (response && response.cookieString) {
-      await navigator.clipboard.writeText(response.cookieString);
-      showToast('Cookie 已复制到剪贴板', 'success');
-    } else {
+    if (!response) {
       showToast('没有可复制的 Cookie', 'error');
+      return;
     }
-  } catch (err) {
+    const merged = [response.douyin.cookieString, response.bilibili.cookieString]
+      .filter(s => s)
+      .join('; ');
+    if (!merged) {
+      showToast('没有可复制的 Cookie', 'error');
+      return;
+    }
+    await navigator.clipboard.writeText(merged);
+    showToast('Cookie 已复制到剪贴板', 'success');
+  } catch {
     showToast('复制失败', 'error');
   }
 });
-
-// ---- Auto-detect current tab URL ----
 
 async function detectCurrentTabUrl() {
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     const currentTab = tabs[0];
-    if (currentTab && currentTab.url) {
-      const url = currentTab.url;
-      if (url.includes('douyin.com/video/') || url.includes('douyin.com/note/') || url.includes('iesdouyin.com/share/video/') || url.includes('v.douyin.com')) {
-        $videoUrl.value = url;
-      }
+    if (!currentTab || !currentTab.url) return;
+    const url = currentTab.url;
+    if (
+      url.includes('douyin.com/video/') ||
+      url.includes('douyin.com/note/') ||
+      url.includes('iesdouyin.com/share/') ||
+      url.includes('v.douyin.com')
+    ) {
+      $videoUrl.value = url;
+      $platform.value = 'douyin';
+    } else if (
+      url.includes('bilibili.com/video/') ||
+      url.includes('bilibili.com/bangumi/play/') ||
+      url.includes('b23.tv/')
+    ) {
+      $videoUrl.value = url;
+      $platform.value = 'bilibili';
     }
   } catch {
-    // Popup in non-tab context — silently skip
+    // ignore
   }
 }
-
-// ---- Download ----
 
 $btnDownload.addEventListener('click', async () => {
   const url = $videoUrl.value.trim();
@@ -147,7 +161,15 @@ $btnDownload.addEventListener('click', async () => {
     $downloadStatus.classList.remove('hidden');
     return;
   }
-
+  const platform = $platform.value;
+  const payload = {
+    url,
+    platform,
+    quality: parseInt($quality.value, 10) || 80,
+    prefer_dash: $preferDash.checked,
+    parts: $parts.value,
+    mux: $mux.checked,
+  };
   $btnDownload.textContent = '下载中...';
   $btnDownload.disabled = true;
   $downloadStatus.className = 'download-status loading';
@@ -158,23 +180,26 @@ $btnDownload.addEventListener('click', async () => {
     const resp = await fetch(DOWNLOAD_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url })
+      body: JSON.stringify(payload),
     });
     const data = await resp.json();
 
     if (data.status === 'started') {
-      // Poll for completion
       const taskId = data.task_id;
       let done = false;
-      for (let i = 0; i < 30; i++) {
+      for (let i = 0; i < 60; i++) {
         await sleep(2000);
         const statusResp = await fetch(DOWNLOAD_STATUS_URL + taskId);
         const statusData = await statusResp.json();
 
         if (statusData.status === 'done') {
+          const files = statusData.files || (statusData.file ? [statusData.file] : []);
           const sizeMB = (statusData.size / 1024 / 1024).toFixed(1);
+          const label = statusData.kind === 'bilibili' ? 'B 站' :
+                         statusData.kind === 'image' ? '图集' : '视频';
           $downloadStatus.className = 'download-status success';
-          $downloadStatus.textContent = `✓ 下载完成: ${statusData.title} (${sizeMB} MB)`;
+          $downloadStatus.textContent =
+            `✓ ${label}完成: ${statusData.title || ''} (${sizeMB} MB, ${files.length} 文件)`;
           done = true;
           break;
         } else if (statusData.status === 'error') {
@@ -192,7 +217,7 @@ $btnDownload.addEventListener('click', async () => {
       $downloadStatus.className = 'download-status error';
       $downloadStatus.textContent = `✗ ${data.message || '请求失败'}`;
     }
-  } catch (err) {
+  } catch {
     $downloadStatus.className = 'download-status error';
     $downloadStatus.textContent = '✗ 无法连接到本地服务，请先启动 CLI';
   } finally {
@@ -204,8 +229,6 @@ $btnDownload.addEventListener('click', async () => {
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
-
-// ---- Toast ----
 
 function showToast(message, type) {
   $toast.textContent = message;
