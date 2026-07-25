@@ -747,6 +747,8 @@ def _download_bilibili_page(
     video_url = plan["video_url"]
     audio_url = plan.get("audio_url") or ""
     ext_v = _ext_from_url(video_url, "m4s")
+    if not ext_v.startswith("."):
+        ext_v = "." + ext_v
     out_v = output_dir / f"{base}-{info.media_id}{suffix}_video{ext_v}"
 
     def _cb_v(downloaded, tot, status=None):
@@ -765,6 +767,8 @@ def _download_bilibili_page(
 
     if audio_url:
         ext_a = _ext_from_url(audio_url, "m4s")
+        if not ext_a.startswith("."):
+            ext_a = "." + ext_a
         out_a = output_dir / f"{base}-{info.media_id}{suffix}_audio{ext_a}"
 
         def _cb_a(downloaded, tot, status=None):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,18 @@ def find_ffmpeg() -> str | None:
     candidates.extend([
         Path.home() / ".dydownload" / "ffmpeg.exe",
         Path.home() / ".dydownload" / "ffmpeg",
+    ])
+    # Active conda env (set by `conda activate`, but not by bare `python`).
+    prefix = os.environ.get("CONDA_PREFIX")
+    if not prefix and sys.prefix:
+        prefix = sys.prefix
+    if prefix:
+        candidates.append(Path(prefix) / "Library" / "bin" / "ffmpeg.exe")
+        candidates.append(Path(prefix) / "bin" / "ffmpeg.exe")
+    # Other common install roots.
+    candidates.extend([
+        Path("C:/conda/Library/bin/ffmpeg.exe"),
+        Path("C:/ProgramData/anaconda3/Library/bin/ffmpeg.exe"),
     ])
     for candidate in candidates:
         if candidate.is_file():
