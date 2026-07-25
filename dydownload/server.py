@@ -1,15 +1,12 @@
 """Minimal HTTP server to receive cookies from the browser extension."""
 
 import json
-import re
-import random
 import threading
 import socket
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from pathlib import Path
 
 from dydownload.config import (
-    COOKIE_DIR, COOKIE_FILE, NETSCAPE_COOKIE_FILE, SERVER_PORTS, USER_AGENTS,
+    COOKIE_DIR, COOKIE_FILE, NETSCAPE_COOKIE_FILE, SERVER_PORTS,
 )
 from dydownload.cookie_manager import load_cookies, CookieStatus
 
@@ -192,84 +189,69 @@ def _serve(server: HTTPServer, ready_event: threading.Event):
 
 def _run_download(task_id: str, url: str, cookie_str: str):
     """Execute the full download pipeline in a background thread."""
-    import httpx
     from dydownload.api_client import (
-        fetch_video_page, fetch_aweme_detail,
-        DouyinAPIError, CookieExpiredError, VideoNotFoundError,
+        CookieExpiredError,
+        DouyinAPIError,
+        VideoNotFoundError,
     )
-    from dydownload.signature import extract_webid
-    from dydownload.video_parser import parse_from_aweme_detail
-    from dydownload.downloader import download_video
-    from dydownload.config import DOWNLOAD_DIR
+    from dydownload.pipeline import download_aweme
+
+    def on_event(name, payload):
+        # Mirror progress back into the task dict so the popup can poll it
+        if name == "info":
+            with _download_lock:
+                _download_tasks[task_id]["info"] = {
+                    "media_type": payload.get("media_type"),
+                    "author": payload.get("author"),
+                    "desc": payload.get("desc"),
+                    "image_count": payload.get("image_count", 0),
+                }
+        elif name == "file" and payload["status"] == "downloading":
+            with _download_lock:
+                _download_tasks[task_id]["progress"] = {
+                    "name": payload["name"],
+                    "index": payload["index"],
+                    "total": payload["total"],
+                    "downloaded": payload.get("downloaded", 0),
+                    "size": payload.get("size", 0),
+                }
 
     try:
-        ua = random.choice(USER_AGENTS)
-
-        # Resolve short link
-        if "v.douyin.com" in url:
-            with httpx.Client(timeout=15.0, follow_redirects=False) as client:
-                resp = client.get(url)
-                if resp.status_code in (301, 302):
-                    url = resp.headers.get("Location", url)
-
-        # Extract video ID
-        m = re.search(r"video/(\d+)", url)
-        video_id = m.group(1) if m else ""
-        if not video_id:
-            m = re.search(r"(\d{15,25})", url)
-            video_id = m.group(1) if m else ""
-
-        if not video_id:
+        result = download_aweme(url, cookie_str, on_event=on_event)
+        if result.video:
+            v = result.video
             with _download_lock:
-                _download_tasks[task_id] = {"status": "error", "message": "无法从 URL 提取视频 ID"}
-            return
-
-        # Step 1: get video page + webid
-        html = fetch_video_page(video_id, cookie_str)
-        webid = extract_webid(html)
-        if not webid:
-            m2 = re.search(r'"user_unique_id"\s*:\s*"(\d+)"', html)
-            if m2:
-                webid = m2.group(1)
-
-        # Step 2: API with a_bogus
-        data = fetch_aweme_detail(video_id, cookie_string=cookie_str, webid=webid or "", user_agent=ua)
-        vinfo = parse_from_aweme_detail(data)
-        if not vinfo:
+                _download_tasks[task_id] = {
+                    "status": "done",
+                    "kind": "video",
+                    "file": str(v.output_path),
+                    "size": v.size_bytes,
+                    "title": v.info.desc or "",
+                    "author": v.info.author_unique_id,
+                }
+        elif result.image:
+            img = result.image
             with _download_lock:
-                _download_tasks[task_id] = {"status": "error", "message": "无法解析视频数据"}
-            return
-
-        media_url = vinfo.no_watermark_url
-        if not media_url:
+                _download_tasks[task_id] = {
+                    "status": "done",
+                    "kind": "image",
+                    "folder": str(img.folder),
+                    "files": [str(p) for p in img.files],
+                    "size": img.size_bytes,
+                    "title": img.info.desc or "",
+                    "author": img.info.author_unique_id,
+                    "image_count": len(img.info.images),
+                }
+        else:
             with _download_lock:
-                _download_tasks[task_id] = {"status": "error", "message": "没有无水印 URL"}
-            return
-
-        # Step 3: download
-        safe_title = re.sub(r'[\x00-\x1f\\/*?:"<>|]', '', vinfo.desc[:80] if vinfo.desc else "douyin").strip()
-        filename = f"{safe_title}-{vinfo.video_id}.mp4"
-        output_path = DOWNLOAD_DIR / filename
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        download_headers = {
-            "Referer": f"https://www.douyin.com/video/{video_id}/",
-            "User-Agent": ua,
-        }
-        download_video(media_url, output_path, headers=download_headers)
-
-        with _download_lock:
-            _download_tasks[task_id] = {
-                "status": "done",
-                "file": str(output_path),
-                "size": output_path.stat().st_size,
-                "title": safe_title,
-                "author": vinfo.author_unique_id,
-            }
+                _download_tasks[task_id] = {"status": "error", "message": "未生成任何文件"}
 
     except CookieExpiredError:
         with _download_lock:
             _download_tasks[task_id] = {"status": "error", "message": "Cookie 已过期，请重新推送"}
+    except VideoNotFoundError as e:
+        with _download_lock:
+            _download_tasks[task_id] = {"status": "error", "message": f"作品不可用: {e}"}
     except DouyinAPIError as e:
         with _download_lock:
             _download_tasks[task_id] = {"status": "error", "message": str(e)}

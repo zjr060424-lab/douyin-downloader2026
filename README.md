@@ -1,8 +1,14 @@
-# dydownload — 抖音无水印视频下载工具
+# dydownload — 抖音无水印视频 / 图集下载工具
 
 > 仅供学习研究，不得用于商业用途
 
-通过浏览器插件自动抓取抖音 Cookie → 本地 HTTP 服务接收 → 解析并下载无水印视频。
+通过浏览器插件自动抓取抖音 Cookie → 本地 HTTP 服务接收 → 解析并下载无水印视频或图集（图集自动归档为子文件夹，含实况图 + 背景音乐）。
+
+支持链接：
+- 短链：`https://v.douyin.com/xxxxx/`
+- 视频页：`https://www.douyin.com/video/{id}`
+- 图文/图集：`https://www.douyin.com/note/{id}`
+- 分享页：`https://www.iesdouyin.com/share/video/{id}/`
 
 ---
 
@@ -20,14 +26,16 @@
 4. 选择 `extension/` 目录
 5. 扩展图标会出现在浏览器工具栏
 
-### 3. 下载视频
+### 3. 下载视频或图集
 
 1. 浏览器打开 [douyin.com](https://www.douyin.com) 并登录
 2. 点击浏览器工具栏的 dydownload 插件图标，点「推送到 CLI」
-3. 在抖音浏览视频，点插件图标 → 「下载无水印视频」
-4. 或复制视频链接，粘贴到 dydownload.exe 窗口的输入框 → 点「下载」
+3. 在抖音浏览视频或图集，点插件图标 → 「下载无水印视频」（插件自动识别视频页/图文页）
+4. 或复制链接，粘贴到 dydownload.exe 窗口的输入框 → 点「下载」
 
-视频保存在 exe 所在目录的 `downloads/` 文件夹。
+文件保存在 exe 所在目录的 `downloads/` 文件夹：
+- 视频 → `downloads/<标题>-<id>.mp4`
+- 图集 → `downloads/<标题>-<id>/01.jpg, 02.jpg …` + `xx_live.mp4`（实况图）+ `bgm.mp3`（背景音乐）
 
 ---
 
@@ -50,8 +58,9 @@ conda activate dydownload
 # 启动后端服务
 python -m dydownload serve
 
-# 下载视频
+# 下载视频或图集
 python -m dydownload download "https://v.douyin.com/xxxxx/"
+python -m dydownload download "https://www.douyin.com/note/xxxxx/"
 
 # 查看 Cookie 状态
 python -m dydownload status
@@ -88,9 +97,10 @@ dydownload/
 │   ├── gui.py            # tkinter GUI 入口
 │   ├── api_client.py     # 抖音 HTTP 请求
 │   ├── signature.py      # a_bogus 签名
-│   ├── video_parser.py   # 视频信息解析
-│   ├── downloader.py     # 流式下载
-│   ├── server.py         # Cookie 接收服务
+│   ├── video_parser.py   # 视频/图集信息解析
+│   ├── downloader.py     # 流式下载（视频 + 图片）
+│   ├── pipeline.py       # 共享下载管线（视频/图集自动分流）
+│   ├── server.py         # Cookie 接收 + 一键下载服务
 │   ├── cookie_manager.py # Cookie 管理
 │   ├── config.py         # 配置常量
 │   └── js/               # 签名 JS 脚本

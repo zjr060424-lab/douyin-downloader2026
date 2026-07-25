@@ -143,6 +143,54 @@ def download_video(
                 raise
 
 
+def download_image(
+    url: str,
+    output_path: Path,
+    headers: dict[str, str] | None = None,
+    max_retries: int = 3,
+    quiet: bool = False,
+) -> Path:
+    """Download a single image (or small file) with retries.
+
+    Images are small, so we skip the HEAD/Range/resume machinery used for
+    videos and just stream the body to disk in one shot.
+
+    Args:
+        url: Direct image URL.
+        output_path: Full path to save the file.
+        headers: HTTP headers (cookie/UA/referer).
+        max_retries: Max retry attempts on connection failure.
+        quiet: Suppress the per-file success line.
+
+    Returns:
+        The path to the downloaded file.
+    """
+    headers = headers or {}
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    last_error: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            with httpx.Client(headers=headers, timeout=60.0, follow_redirects=True) as client:
+                with client.stream("GET", url) as response:
+                    response.raise_for_status()
+                    with open(output_path, "wb") as f:
+                        for chunk in response.iter_bytes(chunk_size=256 * 1024):
+                            f.write(chunk)
+            if not quiet:
+                console.print(f"[green]  ✓ {output_path.name}")
+            return output_path
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                time.sleep((attempt + 1) * 1.5)
+            else:
+                raise
+    if last_error:
+        raise last_error
+    return output_path
+
+
 def get_file_size(url: str, headers: dict[str, str] | None = None) -> int:
     """Get remote file size via HEAD request."""
     headers = headers or {}

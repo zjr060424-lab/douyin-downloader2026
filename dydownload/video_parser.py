@@ -2,7 +2,7 @@
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import unquote
 
 from bs4 import BeautifulSoup
@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 
 @dataclass
 class VideoInfo:
-    """Parsed douyin video metadata."""
+    """Parsed douyin aweme metadata (video OR image post)."""
 
     video_id: str
     desc: str
@@ -24,6 +24,17 @@ class VideoInfo:
     watermark_url: str = ""
     music_url: str = ""
     cover_url: str = ""
+    # ── media type: "video" (default) or "image" (图文/图集) ──
+    media_type: str = "video"
+    # For image posts: parallel lists, one entry per image.
+    # ``images`` holds the still-image URLs (jpeg preferred).
+    # ``image_live_urls`` holds the live-photo mp4 URL for that image, or "" if none.
+    images: list[str] = field(default_factory=list)
+    image_live_urls: list[str] = field(default_factory=list)
+
+    @property
+    def is_image(self) -> bool:
+        return self.media_type == "image"
 
 
 def parse_from_render_data(html: str) -> VideoInfo | None:
@@ -137,6 +148,10 @@ def _find_aweme_in_dict(data: dict) -> dict | None:
         if isinstance(video, dict) and "play_addr" in video:
             return data
 
+    # Direct match: image post (图文/图集) — has aweme_id and a non-empty images list
+    if "aweme_id" in data and isinstance(data.get("images"), list) and data["images"]:
+        return data
+
     # Search known container keys
     for key in ("aweme_detail", "aweme/detail", "detail", "item_struct", "aweme"):
         if key in data and isinstance(data[key], dict):
@@ -186,13 +201,38 @@ def parse_from_item_info(json_data: dict) -> VideoInfo | None:
 
 
 def _extract_video_info(detail: dict) -> VideoInfo | None:
-    """Populate VideoInfo from a raw aweme detail dict."""
+    """Populate VideoInfo from a raw aweme detail dict.
+
+    Handles both regular videos and image posts (图文/图集). Image posts are
+    detected by a non-empty ``images`` list or ``aweme_type == 68``; they carry
+    their media in ``images[]`` rather than ``video.play_addr``.
+    """
+    video_id = detail.get("aweme_id", "")
+    if not video_id:
+        return None
+
+    author = detail.get("author", {}) or {}
+    music = detail.get("music", {}) or {}
+
+    # Music / audio-only URL (background music, present for both types)
+    music_play = music.get("play_url", {}) or {}
+    music_url_list = music_play.get("url_list") or []
+    music_url = _pick_best_url(music_url_list)
+
+    images = detail.get("images")
+    is_image_post = detail.get("aweme_type") == 68 or (
+        isinstance(images, list) and len(images) > 0
+    )
+
+    if is_image_post and isinstance(images, list) and images:
+        return _extract_image_info(
+            detail, images, video_id, author, music_url
+        )
+
+    # ── Regular video ──
     video = detail.get("video")
     if not video:
         return None
-
-    author = detail.get("author", {})
-    music = detail.get("music", {})
 
     # Non-watermarked play address
     play_addr = video.get("play_addr", {})
@@ -204,11 +244,6 @@ def _extract_video_info(detail: dict) -> VideoInfo | None:
     dw_url_list = download_addr.get("url_list") or []
     watermark_url = _pick_best_url(dw_url_list)
 
-    # Music / audio-only URL
-    music_play = music.get("play_url", {})
-    music_url_list = music_play.get("url_list") or []
-    music_url = _pick_best_url(music_url_list)
-
     # Cover image
     cover = video.get("cover", {})
     cover_url_list = cover.get("url_list") or []
@@ -219,10 +254,6 @@ def _extract_video_info(detail: dict) -> VideoInfo | None:
     if isinstance(duration, list):
         # Some API versions wrap duration in a list
         duration = duration[0] if duration else 0
-
-    video_id = detail.get("aweme_id", "")
-    if not video_id:
-        return None
 
     return VideoInfo(
         video_id=str(video_id),
@@ -237,7 +268,88 @@ def _extract_video_info(detail: dict) -> VideoInfo | None:
         watermark_url=watermark_url,
         music_url=music_url,
         cover_url=cover_url,
+        media_type="video",
     )
+
+
+def _extract_image_info(
+    detail: dict,
+    images: list,
+    video_id: str,
+    author: dict,
+    music_url: str,
+) -> VideoInfo | None:
+    """Populate a VideoInfo for an image post (图文/图集)."""
+    image_urls: list[str] = []
+    live_urls: list[str] = []
+    width = height = 0
+
+    for img in images:
+        if not isinstance(img, dict):
+            continue
+        url = _pick_image_url(img.get("url_list") or [])
+        if not url:
+            # Fall back to watermarked download list if url_list is empty
+            url = _pick_image_url(img.get("download_url_list") or [])
+        if not url:
+            continue
+        image_urls.append(url)
+
+        # Live photo: an mp4 attached to this image
+        live = ""
+        img_video = img.get("video")
+        if isinstance(img_video, dict):
+            live_play = img_video.get("play_addr", {}) or {}
+            live = _pick_best_url(live_play.get("url_list") or [])
+        live_urls.append(live)
+
+        if width == 0:
+            width = img.get("width", 0) or 0
+            height = img.get("height", 0) or 0
+
+    if not image_urls:
+        return None
+
+    # Cover: first image, or the aweme-level cover if present
+    cover_url = image_urls[0]
+
+    return VideoInfo(
+        video_id=str(video_id),
+        desc=detail.get("desc", ""),
+        author_nickname=author.get("nickname", ""),
+        author_unique_id=author.get("unique_id", author.get("short_id", "")),
+        create_time=detail.get("create_time", 0),
+        duration_ms=0,
+        width=width,
+        height=height,
+        no_watermark_url="",
+        watermark_url="",
+        music_url=music_url,
+        cover_url=cover_url,
+        media_type="image",
+        images=image_urls,
+        image_live_urls=live_urls,
+    )
+
+
+def _pick_image_url(url_list: list[str]) -> str:
+    """Select the best image URL from a list, preferring jpeg over webp/heic.
+
+    Douyin returns several CDN mirrors of the same image in different formats.
+    jpeg has the widest tool/OS compatibility, so prefer it; then avoid
+    heic/heif; otherwise fall back to the first entry.
+    """
+    if not url_list:
+        return ""
+    # Prefer an explicit jpeg/jpg URL
+    for url in url_list:
+        if url and re.search(r"\.jpe?g(\b|[?&_])", url, re.IGNORECASE):
+            return url
+    # Avoid heic/heif if a non-heic option exists
+    for url in url_list:
+        if url and not re.search(r"\.hei[cf](\b|[?&_])", url, re.IGNORECASE):
+            return url
+    return url_list[0] if url_list else ""
 
 
 def _pick_best_url(url_list: list[str]) -> str:

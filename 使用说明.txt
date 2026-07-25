@@ -1,4 +1,6 @@
-=== dydownload 抖音无水印视频下载工具 使用说明 ===
+=== dydownload 抖音无水印视频 / 图集下载工具 使用说明 ===
+
+支持下载：抖音无水印视频、图文/图集（图集自动归档为子文件夹，含实况图 + 背景音乐）。
 
 【给普通用户的简易方式】
 
@@ -13,11 +15,13 @@
 4. 点击浏览器工具栏的 dydownload 插件图标，点「推送到 CLI」
    （之后每 5 分钟会自动推送，不需要重复操作）
 
-5. 下载视频（两种方式任选）：
-   a) 浏览抖音视频 → 点插件图标 → 地址已自动填好 → 点「下载无水印视频」
-   b) 复制视频链接 → 粘贴到 dydownload.exe 窗口的输入框 → 点「下载」
+5. 下载（两种方式任选）：
+   a) 浏览抖音视频或图集 → 点插件图标 → 地址已自动填好 → 点「下载无水印视频」
+   b) 复制链接 → 粘贴到 dydownload.exe 窗口的输入框 → 点「下载」
 
-6. 下载的视频保存在：用户目录/Downloads/dydownload/
+6. 下载的文件保存在：用户目录/Downloads/dydownload/
+   视频：downloads/<标题>-<id>.mp4
+   图集：downloads/<标题>-<id>/01.jpg、02.jpg …、xx_live.mp4 …、bgm.mp3
 
 【给开发者的命令行方式】
 
@@ -26,14 +30,14 @@
 启动后端服务：
   conda run -n dydownload python -m dydownload.cli serve
 
-下载单个视频：
-  conda run -n dydownload python -m dydownload.cli download "视频链接"
+下载单个视频或图集：
+  conda run -n dydownload python -m dydownload.cli download "链接"
 
 查看 Cookie 状态：
   conda run -n dydownload python -m dydownload.cli status
 
-测试 a_bogus 签名：
-  conda run -n dydownload python -m dydownload.cli test "视频链接"
+测试 a_bogus 签名（同时显示图片列表）：
+  conda run -n dydownload python -m dydownload.cli test "链接"
 
 重新打包 exe（修改源码后）：
   conda run -n dydownload pyinstaller dydownload.spec --distpath ./dist --workpath ./build --noconfirm
@@ -43,11 +47,12 @@
 Q: 下载提示 Cookie 过期？
 A: 浏览器打开 douyin.com 重新登录，点插件图标推送 Cookie。
 
-Q: 下载提示视频不可用？
-A: 视频可能已删除或设为私密，换一个视频试试。
+Q: 下载提示视频/作品不可用？
+A: 作品可能已删除或设为私密，换一个试试。
 
 Q: 插件显示「CLI 未启动」？
 A: dydownload.exe 还没打开，或已关闭，重新双击运行即可。
 
 Q: 文件保存在哪？
-A: C:\Users\你的用户名\Downloads\dydownload\
+A: 视频：C:\Users\你的用户名\Downloads\dydownload\<标题>-<id>.mp4
+   图集：C:\Users\你的用户名\Downloads\dydownload\<标题>-<id>\01.jpg 等

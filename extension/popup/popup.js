@@ -128,7 +128,7 @@ async function detectCurrentTabUrl() {
     const currentTab = tabs[0];
     if (currentTab && currentTab.url) {
       const url = currentTab.url;
-      if (url.includes('douyin.com/video/') || url.includes('iesdouyin.com/share/video/') || url.includes('v.douyin.com')) {
+      if (url.includes('douyin.com/video/') || url.includes('douyin.com/note/') || url.includes('iesdouyin.com/share/video/') || url.includes('v.douyin.com')) {
         $videoUrl.value = url;
       }
     }

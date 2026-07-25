@@ -1,7 +1,6 @@
 """tkinter GUI for dydownload — 双击即可启动，无需命令行。"""
 
 import random
-import re
 import threading
 import time
 import tkinter as tk
@@ -173,14 +172,12 @@ class App:
         thread.start()
 
     def _do_download(self, raw_url: str):
-        import httpx
         from dydownload.api_client import (
-            fetch_video_page, fetch_aweme_detail,
-            DouyinAPIError, CookieExpiredError, VideoNotFoundError,
+            CookieExpiredError,
+            DouyinAPIError,
+            VideoNotFoundError,
         )
-        from dydownload.signature import extract_webid
-        from dydownload.video_parser import parse_from_aweme_detail
-        from dydownload.downloader import download_video
+        from dydownload.pipeline import download_aweme
 
         try:
             # ── Check cookies ──
@@ -190,114 +187,93 @@ class App:
                 return
 
             cookie_str = cookie_info.cookie_string
+            self._log_msg("解析作品链接...")
 
-            # ── Resolve short link ──
-            url = self._extract_url(raw_url)
-            if "v.douyin.com" in url:
-                self._log_msg("解析短链接...")
-                with httpx.Client(timeout=15.0, follow_redirects=False) as client:
-                    resp = client.get(url)
-                    if resp.status_code in (301, 302):
-                        url = resp.headers.get("Location", url)
+            def on_event(name, payload):
+                if name == "phase":
+                    self._log_msg(payload)
+                    self._root_call(lambda t=payload: self._prog_text.set(t))
+                elif name == "info":
+                    self._log_msg(
+                        f"作者: @{payload['author']} ({payload['nickname']})"
+                    )
+                    if payload["desc"]:
+                        self._log_msg(f"描述: {payload['desc'][:60]}")
+                    if payload["media_type"] == "image":
+                        self._log_msg(
+                            f"检测到图文/图集，共 {payload['image_count']} 张图片"
+                            + ("（含 BGM）" if payload["has_bgm"] else "")
+                        )
+                elif name == "file":
+                    idx = payload["index"]
+                    total = payload["total"]
+                    fname = payload["name"]
+                    if payload["status"] == "downloading":
+                        if payload.get("size"):
+                            pct = payload["downloaded"] / payload["size"] * 100
+                            self._root_call(
+                                lambda p=pct, f=fname: self._progress.configure(value=p)
+                            )
+                            self._root_call(
+                                lambda f=fname, d=payload['downloaded'], s=payload['size']:
+                                self._prog_text.set(
+                                    f"下载 {f}: {d/1024:.1f}/{s/1024:.1f} KB"
+                                )
+                            )
+                        else:
+                            self._root_call(
+                                lambda i=idx, t=total, f=fname:
+                                self._prog_text.set(f"下载 {f} ({i}/{t})")
+                            )
+                    elif payload["status"] == "done":
+                        self._log_msg(f"  ✓ {fname}")
+                    elif payload["status"] == "error":
+                        self._log_msg(f"  ✗ {fname} 失败")
+                elif name == "done":
+                    self._root_call(lambda: self._progress.configure(value=100))
+                    if payload.video:
+                        v = payload.video
+                        size_mb = v.size_bytes / 1024 / 1024
+                        self._log_msg(f"✓ 视频下载完成: {v.output_path.name} ({size_mb:.1f} MB)")
+                        self._root_call(
+                            lambda v=v: self._prog_text.set(
+                                f"✓ 完成: {v.output_path.name} ({v.size_bytes/1024/1024:.1f} MB)"
+                            )
+                        )
+                    elif payload.image:
+                        img = payload.image
+                        size_mb = img.size_bytes / 1024 / 1024
+                        self._log_msg(
+                            f"✓ 图集下载完成 ({len(img.files)} 个文件, {size_mb:.1f} MB)"
+                        )
+                        self._log_msg(f"  {img.folder}")
+                        self._root_call(
+                            lambda img=img: self._prog_text.set(
+                                f"✓ 图集完成 ({len(img.files)} 文件)"
+                            )
+                        )
 
-            # ── Extract video ID ──
-            video_id = ""
-            m = re.search(r"video/(\d+)", url)
-            if m:
-                video_id = m.group(1)
-            else:
-                m = re.search(r"(\d{15,25})", url)
-                if m:
-                    video_id = m.group(1)
-
-            if not video_id:
-                self._dl_fail("无法从链接中提取视频 ID，请检查链接格式")
-                return
-
-            self._log_msg(f"Video ID: {video_id}")
-            ua = random.choice(USER_AGENTS)
-
-            # ── Step 1: Get video page ──
-            self._log_msg("获取视频页面...")
             try:
-                html = fetch_video_page(video_id, cookie_str, debug=False)
+                download_aweme(raw_url, cookie_str, output_dir=DOWNLOAD_DIR, on_event=on_event)
             except CookieExpiredError:
                 self._dl_fail("Cookie 已过期，请重新登录抖音并推送 Cookie")
                 return
-            except DouyinAPIError as e:
-                self._dl_fail(str(e))
-                return
-
-            webid = extract_webid(html)
-            if not webid:
-                m2 = re.search(r'"user_unique_id"\s*:\s*"(\d+)"', html)
-                if m2:
-                    webid = m2.group(1)
-
-            # ── Step 2: API ──
-            self._log_msg("调用抖音 API (a_bogus 签名)...")
-            try:
-                data = fetch_aweme_detail(video_id, cookie_string=cookie_str, webid=webid or "", user_agent=ua)
             except VideoNotFoundError as e:
-                self._dl_fail(f"视频不可用: {e}")
+                self._dl_fail(f"作品不可用: {e}")
                 return
             except DouyinAPIError as e:
                 self._dl_fail(f"API 错误: {e}")
                 return
 
-            vinfo = parse_from_aweme_detail(data)
-            if not vinfo:
-                self._dl_fail("无法解析视频数据")
-                return
-
-            media_url = vinfo.no_watermark_url
-            if not media_url:
-                self._dl_fail("没有可用的无水印视频地址")
-                return
-
-            # ── Step 3: Download ──
-            safe_title = re.sub(r'[\x00-\x1f\\/*?:"<>|]', '',
-                                vinfo.desc[:80] if vinfo.desc else "douyin").strip()
-            filename = f"{safe_title}-{vinfo.video_id}.mp4"
-            output_path = DOWNLOAD_DIR / filename
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-
-            self._log_msg(f"开始下载: {filename}")
-            self._log_msg(f"作者: @{vinfo.author_unique_id}")
-            self._root_call(lambda: self._prog_text.set(f"下载中: {filename}"))
-
-            download_headers = {
-                "Referer": f"https://www.douyin.com/video/{video_id}/",
-                "User-Agent": ua,
-            }
-
-            download_video(
-                media_url, output_path,
-                headers=download_headers,
-                progress_callback=self._on_progress,
-            )
-
-            size_mb = output_path.stat().st_size / 1024 / 1024
-            self._log_msg(f"✓ 下载完成: {filename} ({size_mb:.1f} MB)")
-            self._root_call(lambda: self._prog_text.set(f"✓ 下载完成: {filename} ({size_mb:.1f} MB)"))
-            self._root_call(lambda: self._progress.configure(value=100))
             self._root_call(lambda: self._btn_dl.configure(state="normal", text="下载"))
 
         except Exception as e:
             self._dl_fail(f"{type(e).__name__}: {e}")
 
     def _on_progress(self, downloaded, total, status=None):
-        """Called from download thread — schedule UI update on main thread."""
-        if status == "done":
-            self._root_call(lambda: self._progress.configure(value=100))
-            return
-        if total > 0:
-            pct = min(int(downloaded / total * 100), 100)
-            self._root_call(lambda p=pct: self._progress.configure(value=p))
-            mb_dl = downloaded / 1024 / 1024
-            mb_total = total / 1024 / 1024
-            self._root_call(lambda: self._prog_text.set(
-                f"下载中... {mb_dl:.1f} / {mb_total:.1f} MB"))
+        """Legacy video progress hook. Kept for compatibility — the pipeline
+        now drives progress through on_event; this is a no-op stub."""
+        _ = (downloaded, total, status)
 
     def _dl_fail(self, msg):
         self._log_msg(f"[错误] {msg}")
@@ -310,19 +286,6 @@ class App:
         self.root.after(0, fn)
 
     # ── Utils ──
-
-    @staticmethod
-    def _extract_url(text: str) -> str:
-        patterns = [
-            r'https?://v\.douyin\.com/\S+',
-            r'https?://www\.douyin\.com/video/\d+',
-            r'https?://www\.iesdouyin\.com/share/video/\d+',
-        ]
-        for p in patterns:
-            m = re.search(p, text)
-            if m:
-                return m.group(0).rstrip('/')
-        return text
 
     def _open_output_dir(self):
         DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
