@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -68,6 +69,9 @@ def mux_dash(
         raise FileNotFoundError(
             "未找到 ffmpeg；请安装到 PATH 或放到 ~/.dydownload/ffmpeg.exe"
         )
+    video_path = video_path.resolve()
+    audio_path = audio_path.resolve()
+    output_path = output_path.resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # conda-built ffmpeg resolves its DLLs relative to its own cwd, so make
     # sure the ffmpeg directory is on PATH for the subprocess. Otherwise the
@@ -75,30 +79,48 @@ def mux_dash(
     ffmpeg_dir = str(Path(executable).resolve().parent)
     sub_env = os.environ.copy()
     sub_env["PATH"] = ffmpeg_dir + os.pathsep + sub_env.get("PATH", "")
-    completed = subprocess.run(
-        [
-            executable,
-            "-y",
-            "-loglevel",
-            "error",
-            "-i",
-            str(video_path),
-            "-i",
-            str(audio_path),
-            "-c",
-            "copy",
-            "-shortest",
-            str(output_path),
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-        env=sub_env,
-        cwd=ffmpeg_dir,
-    )
-    if completed.returncode != 0 or not output_path.exists():
-        detail = completed.stderr.strip() or f"exit code {completed.returncode}"
-        raise RuntimeError(f"ffmpeg 合流失败: {detail}")
+    # Some Windows ffmpeg builds cannot decode non-ASCII argv paths. Stage
+    # ASCII-named hard links beside the destination and let Python perform the
+    # final Unicode-aware move after ffmpeg exits.
+    with tempfile.TemporaryDirectory(
+        prefix=".dydownload-mux-", dir=output_path.parent,
+    ) as temp_dir:
+        staging = Path(temp_dir)
+        staged_video = staging / "video.m4s"
+        staged_audio = staging / "audio.m4s"
+        staged_output = staging / "output.mp4"
+        try:
+            staged_video.hardlink_to(video_path)
+            staged_audio.hardlink_to(audio_path)
+        except OSError:
+            shutil.copy2(video_path, staged_video)
+            shutil.copy2(audio_path, staged_audio)
+
+        completed = subprocess.run(
+            [
+                executable,
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                staged_video.name,
+                "-i",
+                staged_audio.name,
+                "-c",
+                "copy",
+                "-shortest",
+                staged_output.name,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            env=sub_env,
+            cwd=staging,
+        )
+        if completed.returncode != 0 or not staged_output.exists():
+            detail = completed.stderr.strip() or f"exit code {completed.returncode}"
+            raise RuntimeError(f"ffmpeg 合流失败: {detail}")
+        staged_output.replace(output_path)
     return output_path
