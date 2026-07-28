@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "dydownload Cookie Helper",
   "version": "1.0.0",
-  "description": "自动抓取抖音 Cookie 并传递给 dydownload CLI 下载工具",
+  "description": "将抖音和 B 站 Cookie 安全传递给本机 dydownload 下载工具",
   "permissions": [
     "cookies",
     "storage",
@@ -11,7 +11,10 @@
   "host_permissions": [
     "*://*.douyin.com/*",
     "*://*.iesdouyin.com/*",
-    "*://*.douyinvod.com/*"
+    "*://*.douyinvod.com/*",
+    "*://*.bilibili.com/*",
+    "*://*.b23.tv/*",
+    "http://127.0.0.1/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",
@@ -22,7 +25,11 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*.douyin.com/*"],
+      "matches": [
+        "*://*.douyin.com/*",
+        "*://*.bilibili.com/*",
+        "*://*.b23.tv/*"
+      ],
       "js": ["content/content.js"],
       "run_at": "document_idle"
     }

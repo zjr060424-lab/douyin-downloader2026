@@ -1,23 +1,25 @@
 // dydownload background service worker
-// Periodically checks for douyin cookies and pushes them to the local CLI server.
+// Periodically collects douyin + bilibili cookies and pushes them to the CLI.
 
-const LOCAL_SERVER_URL = 'http://127.0.0.1:18921/cookie';
-const SERVER_HEALTH_URL = 'http://127.0.0.1:18921/health';
+const SERVER_PORTS = [18921, 18922, 18923, 18924, 18925];
 const COOKIE_CHECK_MINUTES = 5;
-const TARGET_DOMAINS = ['.douyin.com', '.iesdouyin.com'];
 
-let lastCookieHash = '';
+const DOUYIN_DOMAINS = ['.douyin.com', '.iesdouyin.com'];
+const BILI_DOMAINS = ['.bilibili.com', '.b23.tv'];
+
+let lastDouyinHash = '';
+let lastBiliHash = '';
+let activeServerBase = '';
 
 // ---- Cookie Helpers ----
 
-async function getAllCookies() {
+async function getCookiesForDomains(domains) {
   let allCookies = [];
-  for (const domain of TARGET_DOMAINS) {
+  for (const domain of domains) {
     try {
       const cookies = await chrome.cookies.getAll({ domain });
       allCookies = allCookies.concat(cookies);
     } catch (err) {
-      // Domain may not have any cookies set yet
       console.debug('[dydownload] No cookies for domain:', domain);
     }
   }
@@ -25,7 +27,6 @@ async function getAllCookies() {
 }
 
 function formatCookieString(cookies) {
-  // Skip cookies with empty names (these are domain-level entries, not real cookies)
   return cookies
     .filter(c => c.name && c.name.trim() !== '')
     .map(c => `${c.name}=${c.value}`)
@@ -33,8 +34,6 @@ function formatCookieString(cookies) {
 }
 
 function formatNetscapeCookies(cookies) {
-  // Netscape HTTP Cookie File format for yt-dlp compatibility
-  // Lines: domain  flag  path  secure  expiration  name  value
   const lines = ['# Netscape HTTP Cookie File'];
   for (const c of cookies) {
     if (!c.name || c.name.trim() === '') continue;
@@ -57,30 +56,41 @@ async function sha256(message) {
 
 // ---- Server Communication ----
 
-async function checkServerHealth() {
-  try {
-    const response = await fetch(SERVER_HEALTH_URL, { method: 'GET', cache: 'no-cache' });
-    return response.ok;
-  } catch {
-    return false;
+async function findServerBase() {
+  const candidates = activeServerBase
+    ? [activeServerBase, ...SERVER_PORTS.map(port => `http://127.0.0.1:${port}`)]
+    : SERVER_PORTS.map(port => `http://127.0.0.1:${port}`);
+  for (const base of [...new Set(candidates)]) {
+    try {
+      const response = await fetch(`${base}/health`, { method: 'GET', cache: 'no-cache' });
+      if (!response.ok) continue;
+      const data = await response.json();
+      if (data.service === 'dydownload' && data.status === 'running') {
+        activeServerBase = base;
+        return base;
+      }
+    } catch {
+      // Try the next configured port.
+    }
   }
+  activeServerBase = '';
+  return '';
 }
 
-async function pushCookiesToServer(cookieString, cookieCount, netscapeCookies) {
+async function pushCookiesToServer(base, path, cookieString, cookieCount, netscapeCookies) {
   try {
-    const response = await fetch(LOCAL_SERVER_URL, {
+    const response = await fetch(`${base}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         cookie: cookieString,
         netscape: netscapeCookies,
         timestamp: new Date().toISOString(),
-        count: cookieCount
-      })
+        count: cookieCount,
+      }),
     });
     return response.ok;
   } catch (err) {
-    // Server not running — silent failure, will retry on next cycle
     console.debug('[dydownload] Local server unreachable:', err.message);
     return false;
   }
@@ -89,56 +99,99 @@ async function pushCookiesToServer(cookieString, cookieCount, netscapeCookies) {
 // ---- Main Logic ----
 
 async function checkAndPushCookies() {
-  const cookies = await getAllCookies();
-  if (cookies.length === 0) {
-    console.debug('[dydownload] No cookies found');
-    return;
+  const [douyinCookies, biliCookies] = await Promise.all([
+    getCookiesForDomains(DOUYIN_DOMAINS),
+    getCookiesForDomains(BILI_DOMAINS),
+  ]);
+
+  const serverBase = await findServerBase();
+  if (!serverBase) {
+    lastDouyinHash = '';
+    lastBiliHash = '';
+    return { success: false, message: 'dydownload 本地服务未启动' };
   }
 
-  const cookieString = formatCookieString(cookies);
-  const netscapeCookies = formatNetscapeCookies(cookies);
-  const hash = await sha256(cookieString);
+  if (!douyinCookies.length && !biliCookies.length) {
+    return { success: false, message: '未找到抖音或 B 站 Cookie', serverBase };
+  }
 
-  if (hash !== lastCookieHash) {
-    lastCookieHash = hash;
-    const serverUp = await checkServerHealth();
-    if (serverUp) {
-      const success = await pushCookiesToServer(cookieString, cookies.length, netscapeCookies);
-      if (success) {
-        console.log(`[dydownload] Pushed ${cookies.length} cookies to CLI`);
+  const failures = [];
+
+  if (douyinCookies.length) {
+    const cookieString = formatCookieString(douyinCookies);
+    const netscape = formatNetscapeCookies(douyinCookies);
+    const hash = await sha256(cookieString);
+    if (hash !== lastDouyinHash) {
+      const pushed = await pushCookiesToServer(
+        serverBase, '/cookie', cookieString, douyinCookies.length, netscape,
+      );
+      if (pushed) {
+        lastDouyinHash = hash;
+        console.log(`[dydownload] Pushed ${douyinCookies.length} 抖音 cookies`);
+      } else {
+        failures.push('抖音 Cookie 推送失败');
       }
-    } else {
-      // Reset hash so we push on next check when server comes back
-      lastCookieHash = '';
     }
   }
+
+  if (biliCookies.length) {
+    const cookieString = formatCookieString(biliCookies);
+    const hash = await sha256(cookieString);
+    if (hash !== lastBiliHash) {
+      const pushed = await pushCookiesToServer(
+        serverBase, '/cookie/bilibili', cookieString, biliCookies.length, '',
+      );
+      if (pushed) {
+        lastBiliHash = hash;
+        console.log(`[dydownload] Pushed ${biliCookies.length} B 站 cookies`);
+      } else {
+        failures.push('B 站 Cookie 推送失败');
+      }
+    }
+  }
+
+  return {
+    success: failures.length === 0,
+    message: failures.join('；'),
+    serverBase,
+  };
 }
 
 // ---- Message Handling (from popup) ----
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getCookies') {
-    getAllCookies().then(cookies => {
+    Promise.all([
+      getCookiesForDomains(DOUYIN_DOMAINS),
+      getCookiesForDomains(BILI_DOMAINS),
+    ]).then(([douyin, bili]) => {
       sendResponse({
         success: true,
-        cookies: cookies,
-        cookieString: formatCookieString(cookies),
-        count: cookies.length
+        douyin: {
+          cookies: douyin,
+          cookieString: formatCookieString(douyin),
+          count: douyin.length,
+        },
+        bilibili: {
+          cookies: bili,
+          cookieString: formatCookieString(bili),
+          count: bili.length,
+        },
       });
-    });
-    return true; // Keep channel open for async response
-  }
-
-  if (request.action === 'pushNow') {
-    checkAndPushCookies().then(() => {
-      sendResponse({ success: true });
     });
     return true;
   }
 
+  if (request.action === 'pushNow') {
+    checkAndPushCookies()
+      .then(sendResponse)
+      .catch(err => sendResponse({ success: false, message: err.message }));
+    return true;
+  }
+
   if (request.action === 'checkServer') {
-    checkServerHealth().then(up => {
-      sendResponse({ serverUp: up });
+    findServerBase().then(serverBase => {
+      sendResponse({ serverUp: Boolean(serverBase), serverBase });
     });
     return true;
   }
@@ -154,6 +207,5 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-// Initial check on service worker startup
 checkAndPushCookies();
 console.log('[dydownload] Background service worker started');
