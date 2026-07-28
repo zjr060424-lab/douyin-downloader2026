@@ -1,22 +1,36 @@
+# Python
 __pycache__/
 *.py[cod]
 *.so
 *.egg-info/
-dist/
-build/
-.eggs/
-downloads/
-.part
+.pytest_cache/
+.coverage
+coverage/
 .venv/
 venv/
+
+# Build and release artifacts
+build/
+dist/
+easy_use/
+*.exe
+*.exe.old
+
+# Runtime output and temporary files
+downloads/
+*.part
+*.log
+
+# Local credentials and environment
+cookies*.txt
+.cookies*.txt
+.env
+.env.*
+!.env.example
+
+# Editors and local agent settings
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
-.claude/
-cookies.txt
-.cookies.txt
-
-dydownload.exe
-dydownload.exe.old
-easy_use/

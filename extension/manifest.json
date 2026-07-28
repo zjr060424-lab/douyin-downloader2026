@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "dydownload Cookie Helper",
   "version": "1.0.0",
-  "description": "自动抓取抖音 Cookie 并传递给 dydownload CLI 下载工具",
+  "description": "将抖音和 B 站 Cookie 安全传递给本机 dydownload 下载工具",
   "permissions": [
     "cookies",
     "storage",
