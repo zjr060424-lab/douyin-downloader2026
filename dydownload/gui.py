@@ -153,6 +153,8 @@ class App:
         self.server_port = None
         self._download_thread = None
         self._closing = False
+        self._cookie_refresh_running = False
+        self._cookie_refresh_after = None
         self._ffmpeg_available = bool(find_ffmpeg())
         self._animations_enabled = _system_animations_enabled()
         self._hero_busy = False
@@ -614,35 +616,66 @@ class App:
             self._log_msg(f"[错误] 服务启动失败: {e}")
 
     def _refresh_cookie_status(self, reschedule=True):
-        lines: list[str] = []
-        for label, info, keys in (
-            ("抖音", load_cookies(), KEY_COOKIE_NAMES),
-            ("B 站", load_bilibili_cookies(), KEY_COOKIE_NAMES_BILI),
-        ):
-            freshness_label = "缺失"
-            if info.status == CookieStatus.MISSING:
-                freshness_label = "缺失 X"
-            else:
-                try:
-                    plat = "bilibili" if label == "B 站" else "douyin"
-                    freshness = probe_cookie_freshness(
-                        info.cookie_string, platform=plat,
-                    )
-                    freshness_label = {
-                        CookieStatus.VALID: "有效 +",
-                        CookieStatus.EXPIRED: "已过期 X",
-                        CookieStatus.UNKNOWN: "未知",
-                    }.get(freshness, "未知")
-                except Exception as e:
-                    freshness_label = f"未知 ({e})"
-            lines.append(f"[{label}] {freshness_label}")
-            for name in keys:
-                mark = "+" if name in info.key_cookies else "X"
-                lines.append(f"  {mark}  {name}")
+        if self._closing or self._cookie_refresh_running:
+            return
+        if self._cookie_refresh_after is not None:
+            try:
+                self.root.after_cancel(self._cookie_refresh_after)
+            except tk.TclError:
+                pass
+            self._cookie_refresh_after = None
+        self._cookie_refresh_running = True
+        self._ck_status.set("正在后台检测双平台 Cookie...")
+        threading.Thread(
+            target=self._collect_cookie_status,
+            args=(reschedule,),
+            daemon=True,
+        ).start()
+
+    def _collect_cookie_status(self, reschedule):
+        try:
+            lines: list[str] = []
+            for label, info, keys in (
+                ("抖音", load_cookies(), KEY_COOKIE_NAMES),
+                ("B 站", load_bilibili_cookies(), KEY_COOKIE_NAMES_BILI),
+            ):
+                freshness_label = "缺失"
+                if info.status == CookieStatus.MISSING:
+                    freshness_label = "缺失 X"
+                else:
+                    try:
+                        plat = "bilibili" if label == "B 站" else "douyin"
+                        freshness = probe_cookie_freshness(
+                            info.cookie_string, platform=plat,
+                        )
+                        freshness_label = {
+                            CookieStatus.VALID: "有效 +",
+                            CookieStatus.EXPIRED: "已过期 X",
+                            CookieStatus.UNKNOWN: "未知",
+                        }.get(freshness, "未知")
+                    except Exception as e:
+                        freshness_label = f"未知 ({e})"
+                lines.append(f"[{label}] {freshness_label}")
+                for name in keys:
+                    mark = "+" if name in info.key_cookies else "X"
+                    lines.append(f"  {mark}  {name}")
+        except Exception as exc:
+            lines = [f"Cookie 状态检测失败: {exc}"]
+        self._root_call(
+            lambda content="\n".join(lines), repeat=reschedule:
+            self._apply_cookie_status(content, repeat)
+        )
+
+    def _apply_cookie_status(self, text, reschedule):
+        self._cookie_refresh_running = False
+        if self._closing:
+            return
         self._ck_status.set("双平台 Cookie 已加载 - 见下方")
-        self._update_ck_details("\n".join(lines))
+        self._update_ck_details(text)
         if reschedule:
-            self.root.after(30_000, self._refresh_cookie_status)
+            self._cookie_refresh_after = self.root.after(
+                30_000, self._refresh_cookie_status
+            )
 
     def _update_ck_details(self, text):
         self._ck_details.configure(state="normal")
@@ -685,15 +718,16 @@ class App:
         self._set_progress(0)
         self._prog_text.set("准备下载...")
 
-        thread = threading.Thread(
-            target=self._do_download,
-            args=(url, platform, quality, parts_mode, prefer_dash, use_mux),
-            daemon=True,
-        )
-        # Surface thread exceptions into the GUI debug log
-        def _thread_excepthook(args):
-            _excepthook(args.exc_type, args.exc_value, args.exc_traceback)
-        thread.excepthook = _thread_excepthook
+        def _download_target():
+            try:
+                self._do_download(
+                    url, platform, quality, parts_mode, prefer_dash, use_mux
+                )
+            except BaseException as exc:
+                _excepthook(type(exc), exc, exc.__traceback__)
+                self._dl_fail(f"{type(exc).__name__}: {exc}")
+
+        thread = threading.Thread(target=_download_target, daemon=True)
         self._download_thread = thread
         thread.start()
 
@@ -820,14 +854,19 @@ class App:
                     elif payload.bilibili:
                         bili = payload.bilibili
                         size_mb = bili.size_bytes / 1024 / 1024
+                        file_count = sum(
+                            1 + len(part.extra_paths) for part in bili.parts
+                        )
                         self._log_msg(
-                            f"+ B 站完成 ({len(bili.parts)} 文件, {size_mb:.1f} MB)"
+                            f"+ B 站完成 ({file_count} 文件, {size_mb:.1f} MB)"
                         )
                         for part in bili.parts:
                             self._log_msg(f"  {part.output_path.name}")
+                            for path in part.extra_paths:
+                                self._log_msg(f"  {path.name}")
                         self._root_call(
-                            lambda bili=bili: self._prog_text.set(
-                                f"+ B 站完成 ({len(bili.parts)} 文件)"
+                            lambda count=file_count: self._prog_text.set(
+                                f"+ B 站完成 ({count} 文件)"
                             )
                         )
 
@@ -916,7 +955,13 @@ class App:
         self._root_call(lambda: self._set_download_active(False))
 
     def _root_call(self, fn):
-        self.root.after(0, fn)
+        if self._closing:
+            return
+        try:
+            self.root.after(0, fn)
+        except (RuntimeError, tk.TclError):
+            if not self._closing:
+                raise
 
     def _open_output_dir(self):
         DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -928,41 +973,41 @@ class App:
 
     def _append_log(self, msg):
         self._log.configure(state="normal")
-        # Aggressively strip ALL non-ASCII before sending to Tk — the frozen
-        # interpreter's Tk has been observed to raise UnicodeEncodeError on
-        # any CJK character regardless of the system code page.
         line = "[{}] {}\n".format(time.strftime("%H:%M:%S"), self._safe_log(msg))
         try:
-            line.encode("ascii")
+            self._log.insert("end", line)
         except UnicodeEncodeError:
-            line = line.encode("ascii", errors="replace").decode("ascii")
-        self._log.insert("end", line)
+            fallback = line.encode("ascii", errors="replace").decode("ascii")
+            self._log.insert("end", fallback)
         self._log.see("end")
         self._log.configure(state="disabled")
 
     @staticmethod
     def _safe_log(msg: str) -> str:
-        # Tk widgets / StringVars on Windows build under PyInstaller have been
-        # observed to raise UnicodeEncodeError on any non-ASCII character — even
-        # ones that exist in the system code page (cp936 / gbk). The root cause
-        # appears to be inside Tk's internal encoding pipeline in the frozen
-        # interpreter. Aggressively replace any non-ASCII byte with ``?`` so the
-        # GUI text layer always receives pure ASCII.
         if not isinstance(msg, str):
             try:
                 msg = str(msg)
             except Exception:
                 return "<unprintable>"
-        # Strip ALL non-ASCII unconditionally so Tk never sees anything outside
-        # the 7-bit range. This sacrifices log readability but guarantees no
-        # UnicodeEncodeError can ever escape the GUI layer.
-        return msg.encode("ascii", errors="replace").decode("ascii")
+        # Preserve normal CJK text while replacing malformed surrogate code
+        # points that Tk cannot encode.
+        return msg.encode("utf-8", errors="replace").decode("utf-8")
 
     def _on_close(self):
-        if messagebox.askokcancel("退出", "确定要退出 dydownload 吗？\n后端服务将停止。"):
+        active = self._download_thread and self._download_thread.is_alive()
+        detail = "\n当前下载会被中断，并保留可续传的临时文件。" if active else ""
+        if messagebox.askokcancel(
+            "退出", f"确定要退出 dydownload 吗？\n后端服务将停止。{detail}"
+        ):
             self._closing = True
+            if self._cookie_refresh_after is not None:
+                try:
+                    self.root.after_cancel(self._cookie_refresh_after)
+                except tk.TclError:
+                    pass
             if self.server:
                 self.server.shutdown()
+                self.server.server_close()
             self.root.destroy()
 
 

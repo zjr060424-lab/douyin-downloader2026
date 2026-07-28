@@ -8,7 +8,8 @@ live-photo mp4 + optional BGM.
 
 import random
 import re
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -28,6 +29,12 @@ from dydownload.signature import extract_webid
 from dydownload.video_parser import VideoInfo, parse_from_aweme_detail
 
 console = Console()
+_DOWNLOAD_LOCKS = tuple(threading.RLock() for _ in range(32))
+
+
+def _download_lock(output_dir: Path | None) -> threading.RLock:
+    directory = Path(output_dir or DOWNLOAD_DIR).resolve()
+    return _DOWNLOAD_LOCKS[hash(str(directory).casefold()) % len(_DOWNLOAD_LOCKS)]
 
 
 # ── Result types ────────────────────────────────────────────────────────────
@@ -40,6 +47,7 @@ class VideoResult:
     info: VideoInfo
     output_path: Path
     size_bytes: int
+    extra_paths: list[Path] = field(default_factory=list)
 
 
 @dataclass
@@ -63,11 +71,12 @@ class DownloadResult:
     @property
     def paths(self) -> list[Path]:
         if self.video:
-            return [self.video.output_path]
+            return [self.video.output_path, *self.video.extra_paths]
         if self.image:
             return self.image.files
         if self.bilibili:
-            return [p.output_path for p in self.bilibili.parts]
+            return [path for part in self.bilibili.parts
+                    for path in (part.output_path, *part.extra_paths)]
         return []
 
 
@@ -533,7 +542,7 @@ def download_douyin(
     )
 
 
-def download_media(
+def _download_media_unlocked(
     url: str,
     cookie_string: str,
     output_dir: Path | None = None,
@@ -573,6 +582,33 @@ def download_media(
             mux=mux,
         )
     raise ValueError(f"未知平台: {platform!r}")
+
+
+def download_media(
+    url: str,
+    cookie_string: str,
+    output_dir: Path | None = None,
+    on_event=None,
+    *,
+    platform: str = "auto",
+    qn: int = 80,
+    prefer_dash: bool = True,
+    multi_part_mode: str = "all",
+    mux: bool = True,
+) -> DownloadResult:
+    """Run one complete pipeline at a time for each output directory."""
+    with _download_lock(output_dir):
+        return _download_media_unlocked(
+            url,
+            cookie_string,
+            output_dir=output_dir,
+            on_event=on_event,
+            platform=platform,
+            qn=qn,
+            prefer_dash=prefer_dash,
+            multi_part_mode=multi_part_mode,
+            mux=mux,
+        )
 
 
 def download_bilibili(
@@ -616,10 +652,12 @@ def download_bilibili(
             "B站番剧 / bangumi 链接暂不支持（只支持普通视频）。"
         )
 
-    # 3. Resolve to BV id
+    # 3. Validate a regular BV or legacy AV id. /view normalizes AV responses
+    # to a MediaInfo containing the canonical BV id used by /playurl.
     bv = _bili_extract_bv(url)
-    if not bv:
-        raise BilibiliAPIError(f"无法从链接中提取 BV id: {url}")
+    av = _bili_extract_av(url)
+    if not (bv or av):
+        raise BilibiliAPIError(f"无法从链接中提取 BV/AV id: {url}")
 
     _emit(on_event, "phase", "解析 B 站视频 (WBI 签名)")
 
@@ -669,17 +707,7 @@ def download_bilibili(
             on_event=on_event,
         )
         parts.append(page_vr)
-        try:
-            total_bytes += page_vr.output_path.stat().st_size
-        except Exception:
-            pass
-
-        # Audio companion file (if it exists alongside) — append to size.
-        aud_sibling = page_vr.output_path.with_name(
-            page_vr.output_path.stem.replace("_video", "_audio") + ".m4s"
-        )
-        if aud_sibling.exists():
-            total_bytes += aud_sibling.stat().st_size
+        total_bytes += page_vr.size_bytes
 
     result = DownloadResult(
         bilibili=BilibiliResult(info=info, parts=parts, size_bytes=total_bytes)
@@ -723,6 +751,8 @@ def _download_bilibili_page(
     if plan["kind"] == "single":
         url = plan["url"]
         ext = _ext_from_url(url, "mp4")
+        if not ext.startswith("."):
+            ext = "." + ext
         out = output_dir / f"{base}-{info.media_id}{suffix}{ext}"
 
         # Wrap download_progress with on_event "file"
@@ -746,6 +776,10 @@ def _download_bilibili_page(
     # DASH: download video (+ audio if present) into sibling files.
     video_url = plan["video_url"]
     audio_url = plan.get("audio_url") or ""
+    if not audio_url:
+        raise BilibiliAPIError(
+            f"DASH 流缺少音频轨 (cid={page.cid})，已停止以避免生成无声视频"
+        )
     ext_v = _ext_from_url(video_url, "m4s")
     if not ext_v.startswith("."):
         ext_v = "." + ext_v
@@ -785,49 +819,64 @@ def _download_bilibili_page(
         try:
             download_video(audio_url, out_a, headers=headers,
                            progress_callback=_cb_a)
-            size += out_a.stat().st_size if out_a.exists() else 0
-            if mux:
-                ffmpeg = find_ffmpeg()
-                if ffmpeg:
-                    final_out = output_dir / f"{base}-{info.media_id}{suffix}.mp4"
-                    _emit(on_event, "phase", "ffmpeg 合流 DASH 音视频")
-                    try:
-                        mux_dash(out_v, out_a, final_out, ffmpeg=ffmpeg)
-                        out_v.unlink(missing_ok=True)
-                        out_a.unlink(missing_ok=True)
-                        final_size = final_out.stat().st_size
-                        _emit(on_event, "file", {
-                            "name": final_out.name,
-                            "index": idx,
-                            "total": total,
-                            "status": "done",
-                            "downloaded": final_size,
-                            "size": final_size,
-                            "path": str(final_out),
-                        })
-                        shim = MediaInfoShim(info, page, plan, kind="dash")
-                        return VideoResult(
-                            info=shim,
-                            output_path=final_out,
-                            size_bytes=final_size,
-                        )
-                    except Exception as exc:
-                        console.print(
-                            f"[yellow]  [!] ffmpeg 合流失败，保留分轨文件: {exc}[/yellow]"
-                        )
-                else:
-                    _emit(
-                        on_event,
-                        "phase",
-                        "未找到 ffmpeg；保留 DASH 视频/音频分轨文件",
+        except Exception as exc:
+            _emit(on_event, "file", {
+                "name": out_a.name,
+                "index": idx,
+                "total": total,
+                "status": "error",
+                "downloaded": 0,
+                "size": 0,
+                "path": None,
+            })
+            raise BilibiliAPIError(f"DASH 音频下载失败: {exc}") from exc
+
+        size += out_a.stat().st_size if out_a.exists() else 0
+        if mux:
+            ffmpeg = find_ffmpeg()
+            if ffmpeg:
+                final_out = output_dir / f"{base}-{info.media_id}{suffix}.mp4"
+                _emit(on_event, "phase", "ffmpeg 合流 DASH 音视频")
+                try:
+                    mux_dash(out_v, out_a, final_out, ffmpeg=ffmpeg)
+                    out_v.unlink(missing_ok=True)
+                    out_a.unlink(missing_ok=True)
+                    final_size = final_out.stat().st_size
+                    _emit(on_event, "file", {
+                        "name": final_out.name,
+                        "index": idx,
+                        "total": total,
+                        "status": "done",
+                        "downloaded": final_size,
+                        "size": final_size,
+                        "path": str(final_out),
+                    })
+                    shim = MediaInfoShim(info, page, plan, kind="dash")
+                    return VideoResult(
+                        info=shim,
+                        output_path=final_out,
+                        size_bytes=final_size,
+                    )
+                except Exception as exc:
+                    console.print(
+                        f"[yellow]  [!] ffmpeg 合流失败，保留分轨文件: {exc}[/yellow]"
                     )
             else:
-                _emit(on_event, "phase", "DASH 分轨下载完成（已关闭自动合流）")
-        except Exception as e:
-            console.print(f"[yellow]  [!] DASH 音频下载失败: {e}[/yellow]")
+                _emit(
+                    on_event,
+                    "phase",
+                    "未找到 ffmpeg；保留 DASH 视频/音频分轨文件",
+                )
+        else:
+            _emit(on_event, "phase", "DASH 分轨下载完成（已关闭自动合流）")
 
     shim = MediaInfoShim(info, page, plan, kind="dash")
-    return VideoResult(info=shim, output_path=out_v, size_bytes=size)
+    return VideoResult(
+        info=shim,
+        output_path=out_v,
+        size_bytes=size,
+        extra_paths=[out_a],
+    )
 
 
 class MediaInfoShim(VideoInfo):

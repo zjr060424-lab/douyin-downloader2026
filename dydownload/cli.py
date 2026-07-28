@@ -2,6 +2,7 @@
 
 import re
 import shutil
+import time
 from pathlib import Path
 
 import typer
@@ -398,13 +399,16 @@ def download(
             elif payload.bilibili:
                 bili = payload.bilibili
                 size_mb = bili.size_bytes / 1024 / 1024
+                file_count = sum(1 + len(part.extra_paths) for part in bili.parts)
                 console.print()
                 console.print(
                     f"[bold green]+ B 站下载完成[/bold green] "
-                    f"[dim]({len(bili.parts)} 个文件, {size_mb:.1f} MB)[/dim]"
+                    f"[dim]({file_count} 个文件, {size_mb:.1f} MB)[/dim]"
                 )
                 for part in bili.parts:
                     console.print(f"[dim]  {part.output_path.name}[/dim]")
+                    for path in part.extra_paths:
+                        console.print(f"[dim]  {path.name}[/dim]")
 
     try:
         download_media(
@@ -460,11 +464,13 @@ def serve(
     console.print("[yellow]按 Ctrl+C 停止服务[/yellow]")
 
     try:
-        server.serve_forever()
+        while True:
+            time.sleep(3600)
     except KeyboardInterrupt:
         console.print()
         console.print("[dim]服务已停止[/dim]")
         server.shutdown()
+        server.server_close()
 
 
 def main():

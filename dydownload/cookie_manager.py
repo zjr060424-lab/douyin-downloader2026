@@ -113,16 +113,16 @@ def probe_cookie_freshness(
 
     if platform == "bilibili":
         try:
-            from dydownload.bilibili.api_client import probe_cookie
+            from dydownload.bilibili.api_client import BilibiliAPIError, probe_cookie
             return (
                 CookieStatus.VALID
                 if probe_cookie(cookie_string)
                 else CookieStatus.EXPIRED
             )
-        except httpx.RequestError:
+        except (httpx.RequestError, BilibiliAPIError):
             return CookieStatus.UNKNOWN
         except Exception:
-            return CookieStatus.EXPIRED
+            return CookieStatus.UNKNOWN
 
     # Douyin probe (original logic)
     headers = dict(BASE_HEADERS)

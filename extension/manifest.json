@@ -13,7 +13,8 @@
     "*://*.iesdouyin.com/*",
     "*://*.douyinvod.com/*",
     "*://*.bilibili.com/*",
-    "*://*.b23.tv/*"
+    "*://*.b23.tv/*",
+    "http://127.0.0.1/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",

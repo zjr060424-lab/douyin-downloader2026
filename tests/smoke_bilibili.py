@@ -7,6 +7,7 @@ dispatcher. Mirrors the style of ``smoke_tuwen.py``.
 
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -16,7 +17,7 @@ import dydownload.server as srv
 import dydownload.cookie_manager as cm
 import dydownload.bilibili.api_client as api
 import dydownload.bilibili.video_parser as vp
-from dydownload.bilibili.signature import wbi_sign
+from dydownload.bilibili.signature import _wbi_mixin_key, wbi_sign
 from dydownload.bilibili.api_client import (
     is_bangumi_url,
     extract_av,
@@ -53,6 +54,10 @@ def test_url_helpers():
 
 
 def test_wbi_sign_known_vector():
+    assert _wbi_mixin_key(
+        "7cd084941338484aae1ad9415bf840dd",
+        "4932caff0ff746eab6f01bf08b70ac45",
+    ) == "ea1db114af3d7062874693fa044f4ff8"
     params = {"bvid": "BV1xx411c7mD", "cid": 12345}
     signed = wbi_sign(
         params,
@@ -142,10 +147,11 @@ def test_pick_streams_dash_and_single():
 
 def test_probe_cookie_requires_sessdata():
     assert probe_cookie("") is False
-    assert probe_cookie("foo=bar; SESSDATA=present") in (True, False)
-    # When SESSDATA present, the function actually calls /nav, so it may
-    # succeed or fail depending on network. Either result is acceptable in CI.
-    assert isinstance(probe_cookie("foo=bar; SESSDATA=present"), bool)
+    with patch(
+        "dydownload.bilibili.api_client._fetch_nav",
+        return_value={"data": {"isLogin": True}},
+    ):
+        assert probe_cookie("foo=bar; SESSDATA=present") is True
 
 
 # ── extract_url covers both platforms ─────────────────────────────────

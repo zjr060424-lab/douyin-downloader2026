@@ -12,14 +12,14 @@ import hashlib
 import time
 from urllib.parse import quote
 
-# 32-byte index table for mixin_key rotation. Static (per upstream docs).
+# Standard WBI mixin-key permutation table (per upstream docs).
 _MIXIN_TABLE = [
-    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 63, 36, 39, 56, 65, 53,
-    31, 35, 27, 16, 23, 56, 9, 23, 64, 23, 51, 2, 56, 43, 12, 18,
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35,
+    27, 43, 5, 49, 33, 9, 42, 19, 29, 28, 14, 39, 12, 38, 41, 13,
 ]
 
 # Characters that must be filtered from a value before URL-encoding.
-_FILTER = "!'\()*"
+_FILTER = "!'()*"
 
 
 def _filter_chars(s: str) -> str:
@@ -29,8 +29,10 @@ def _filter_chars(s: str) -> str:
 
 def _wbi_mixin_key(img_key: str, sub_key: str) -> str:
     """Derive the 32-byte mixin key from img_key + sub_key."""
-    raw = (img_key + sub_key)[:32]
-    return "".join(raw[i] for i in _MIXIN_TABLE if i < len(raw))
+    raw = img_key + sub_key
+    if len(raw) < 64:
+        raise ValueError("WBI img_key/sub_key 长度不足")
+    return "".join(raw[i] for i in _MIXIN_TABLE)[:32]
 
 
 def wbi_sign(params: dict, img_key: str, sub_key: str, *, wts: int | None = None) -> dict:

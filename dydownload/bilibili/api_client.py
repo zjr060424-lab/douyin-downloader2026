@@ -63,7 +63,7 @@ def build_headers(cookie_string: str = "", user_agent: str = "", referer: str = 
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Dest": "empty",
     }
-    headers = {k: _safe_str(v) for k, v in headers.items()}
+    headers = {k: _ascii_header_value(v) for k, v in headers.items()}
     if cookie_string:
         headers["Cookie"] = cookie_string
     return headers
@@ -152,14 +152,17 @@ def _fetch_nav(cookie_string: str = "", user_agent: str = "") -> dict:
 
 
 def _safe_str(obj) -> str:
-    """Return ``str(obj)`` with non-ASCII bytes replaced — defensive helper to
-    avoid UnicodeEncodeError on Windows frozen builds when ``str()`` produces
-    a string with characters outside the system code page."""
+    """Return display-safe text while preserving valid Unicode diagnostics."""
     try:
         s = str(obj)
     except Exception:
         return "<unprintable>"
-    return s.encode("ascii", errors="replace").decode("ascii")
+    return s.encode("utf-8", errors="replace").decode("utf-8")
+
+
+def _ascii_header_value(obj) -> str:
+    """Coerce an HTTP header value to the ASCII range required by httpx."""
+    return _safe_str(obj).encode("ascii", errors="replace").decode("ascii")
 
 
 def fetch_wbi_keys(cookie_string: str = "", user_agent: str = "") -> tuple[str, str]:
@@ -323,10 +326,7 @@ def probe_cookie(cookie_string: str, user_agent: str = "") -> bool:
     """Return True only when `/nav` confirms the session is logged in."""
     if not cookie_string or "SESSDATA=" not in cookie_string:
         return False
-    try:
-        payload = _fetch_nav(cookie_string, user_agent)
-    except BilibiliAPIError:
-        return False
+    payload = _fetch_nav(cookie_string, user_agent)
     return (payload.get("data") or {}).get("isLogin") is True
 
 

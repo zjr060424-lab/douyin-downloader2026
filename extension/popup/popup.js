@@ -21,8 +21,7 @@ const $preferDash = document.getElementById('preferDash');
 const $parts = document.getElementById('parts');
 const $mux = document.getElementById('mux');
 
-const DOWNLOAD_URL = 'http://127.0.0.1:18921/download';
-const DOWNLOAD_STATUS_URL = 'http://127.0.0.1:18921/download/status/';
+let serverBase = '';
 
 document.addEventListener('DOMContentLoaded', async () => {
   await refreshStatus();
@@ -34,16 +33,21 @@ async function checkServer() {
   try {
     const response = await chrome.runtime.sendMessage({ action: 'checkServer' });
     if (response && response.serverUp) {
+      serverBase = response.serverBase;
       $serverDot.className = 'status-dot online';
-      $serverStatus.textContent = 'CLI 已连接';
+      $serverStatus.textContent = `CLI 已连接 (${new URL(serverBase).port})`;
+      return true;
     } else {
+      serverBase = '';
       $serverDot.className = 'status-dot offline';
       $serverStatus.textContent = 'CLI 未启动';
     }
   } catch {
+    serverBase = '';
     $serverDot.className = 'status-dot offline';
     $serverStatus.textContent = 'CLI 未启动';
   }
+  return false;
 }
 
 async function refreshStatus() {
@@ -92,7 +96,10 @@ $btnPush.addEventListener('click', async () => {
   $btnPush.textContent = '推送中...';
   $btnPush.disabled = true;
   try {
-    await chrome.runtime.sendMessage({ action: 'pushNow' });
+    const response = await chrome.runtime.sendMessage({ action: 'pushNow' });
+    if (!response || !response.success) {
+      throw new Error(response?.message || '本地服务未确认接收');
+    }
     await chrome.storage.local.set({ lastPushTime: Date.now() });
     await refreshStatus();
     await checkServer();
@@ -177,7 +184,10 @@ $btnDownload.addEventListener('click', async () => {
   $downloadStatus.classList.remove('hidden');
 
   try {
-    const resp = await fetch(DOWNLOAD_URL, {
+    if (!serverBase && !(await checkServer())) {
+      throw new Error('本地服务未启动');
+    }
+    const resp = await fetch(`${serverBase}/download`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -189,7 +199,10 @@ $btnDownload.addEventListener('click', async () => {
       let done = false;
       for (let i = 0; i < 60; i++) {
         await sleep(2000);
-        const statusResp = await fetch(DOWNLOAD_STATUS_URL + taskId);
+        const statusResp = await fetch(`${serverBase}/download/status/${taskId}`);
+        if (!statusResp.ok) {
+          throw new Error(`状态查询失败 (${statusResp.status})`);
+        }
         const statusData = await statusResp.json();
 
         if (statusData.status === 'done') {
@@ -217,9 +230,9 @@ $btnDownload.addEventListener('click', async () => {
       $downloadStatus.className = 'download-status error';
       $downloadStatus.textContent = `✗ ${data.message || '请求失败'}`;
     }
-  } catch {
+  } catch (err) {
     $downloadStatus.className = 'download-status error';
-    $downloadStatus.textContent = '✗ 无法连接到本地服务，请先启动 CLI';
+    $downloadStatus.textContent = `✗ ${err.message || '无法连接到本地服务，请先启动 CLI'}`;
   } finally {
     $btnDownload.textContent = '下载无水印视频';
     $btnDownload.disabled = false;
