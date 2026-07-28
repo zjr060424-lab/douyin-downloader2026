@@ -126,7 +126,7 @@ def download_video(
                     output_path.unlink()
                 part_path.rename(output_path)
 
-            console.print(f"[green]✓ 下载完成: {output_path}")
+            console.print(f"[green]+ 下载完成: {output_path}")
             if progress_callback:
                 progress_callback(downloaded_bytes, total_size or downloaded_bytes, "done")
             return output_path
@@ -178,7 +178,7 @@ def download_image(
                         for chunk in response.iter_bytes(chunk_size=256 * 1024):
                             f.write(chunk)
             if not quiet:
-                console.print(f"[green]  ✓ {output_path.name}")
+                console.print(f"[green]  + {output_path.name}")
             return output_path
         except (httpx.RequestError, httpx.HTTPStatusError) as e:
             last_error = e

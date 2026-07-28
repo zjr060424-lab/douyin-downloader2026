@@ -88,9 +88,9 @@ def status():
         if name in cookie_info.key_cookies:
             val = cookie_info.key_cookies[name]
             preview = val[:30] + "..." if len(val) > 30 else val
-            table.add_row(name, "✓", preview)
+            table.add_row(name, "+", preview)
         else:
-            table.add_row(name, "[red]✗ 缺失[/red]", "-")
+            table.add_row(name, "[red]X 缺失[/red]", "-")
 
     console.print(table)
     console.print()
@@ -103,9 +103,9 @@ def status():
     # Probe freshness
     freshness = probe_cookie_freshness(cookie_info.cookie_string)
     if freshness == CookieStatus.VALID:
-        console.print("[green]Cookie 状态: 有效 ✓[/green]")
+        console.print("[green]Cookie 状态: 有效 +[/green]")
     elif freshness == CookieStatus.EXPIRED:
-        console.print("[red]Cookie 状态: 已过期 ✗[/red]")
+        console.print("[red]Cookie 状态: 已过期 X[/red]")
         console.print("[yellow]请在浏览器中打开抖音刷新后重新推送 Cookie[/yellow]")
     else:
         console.print("[yellow]Cookie 状态: 无法验证（可能网络问题）[/yellow]")
@@ -113,9 +113,9 @@ def status():
     # yt-dlp check
     ytdlp = _find_ytdlp()
     if Path(ytdlp).exists() or shutil.which(ytdlp):
-        console.print(f"[green]yt-dlp:    {ytdlp} ✓[/green]")
+        console.print(f"[green]yt-dlp:    {ytdlp} +[/green]")
     else:
-        console.print(f"[red]yt-dlp:    未找到 ✗[/red]")
+        console.print(f"[red]yt-dlp:    未找到 X[/red]")
 
 
 @app.command()
@@ -175,7 +175,7 @@ def test(
     console.print("\n[bold]Step 1:[/bold] 获取作品页面...")
     try:
         html = fetch_video_page(aweme_id, cookie_str, debug=False)
-        console.print(f"  [green]✓[/green] 页面获取成功 ({len(html):,} chars)")
+        console.print(f"  [green]+[/green] 页面获取成功 ({len(html):,} chars)")
     except CookieExpiredError:
         console.print("[red][!] Cookie 已过期，请重新推送[/red]")
         raise typer.Exit(1)
@@ -199,7 +199,7 @@ def test(
             webid=webid or "",
             user_agent=ua,
         )
-        console.print("  [green]✓[/green] API 调用成功 (status_code: 0)")
+        console.print("  [green]+[/green] API 调用成功 (status_code: 0)")
 
     except VideoNotFoundError as e:
         console.print(f"  [yellow][!] 视频不可用: {e}[/yellow]")
@@ -219,7 +219,7 @@ def test(
         console.print("  [red][!] 无法解析视频数据[/red]")
         raise typer.Exit(1)
 
-    console.print(f"  [green]✓[/green] 解析成功 [dim](media_type={vinfo.media_type})[/dim]")
+    console.print(f"  [green]+[/green] 解析成功 [dim](media_type={vinfo.media_type})[/dim]")
     console.print()
     table = Table(title="作品信息", show_header=False)
     table.add_column("Key", style="cyan")
@@ -249,7 +249,7 @@ def test(
     table.add_row("发布时间", str(vinfo.create_time))
     console.print(table)
     console.print()
-    console.print("[green bold]✓ a_bogus 签名验证通过！[/green bold]")
+    console.print("[green bold]+ a_bogus 签名验证通过！[/green bold]")
     console.print(
         "[dim]提示: 运行 [cyan]python -m dydownload download <url>[/cyan] 直接下载此作品。[/dim]"
     )
@@ -344,13 +344,13 @@ def download(
             mt = payload.get("media_type")
             if mt == "image":
                 console.print(
-                    f"[green]✓ 检测到图文/图集[/green] "
+                    f"[green]+ 检测到图文/图集[/green] "
                     f"[dim]({payload['image_count']} 张图片, "
                     f"BGM: {'有' if payload['has_bgm'] else '无'})[/dim]"
                 )
             elif payload.get("platform") == "bilibili":
                 console.print(
-                    f"[green]✓ B 站视频[/green] "
+                    f"[green]+ B 站视频[/green] "
                     f"[dim]({payload.get('pages', 1)} P, "
                     f"{payload.get('width', '?')}x{payload.get('height', '?')}, "
                     f"~{payload.get('duration', 0)}s)[/dim]"
@@ -376,7 +376,7 @@ def download(
                     console.print(f"[dim]  → {name_} ({payload['index']}/{payload['total']})[/dim]")
             elif status == "done":
                 size_kb = (payload.get("size") or payload.get("downloaded") or 0) / 1024
-                console.print(f"[green]  ✓ {name_}[/green] [dim]({size_kb:.1f} KB)[/dim]")
+                console.print(f"[green]  + {name_}[/green] [dim]({size_kb:.1f} KB)[/dim]")
             elif status == "error":
                 console.print(f"[yellow]  [!] {name_} 失败[/yellow]")
         elif name == "done":
@@ -384,13 +384,13 @@ def download(
                 v = payload.video
                 size_mb = v.size_bytes / 1024 / 1024
                 console.print()
-                console.print(f"[bold green]✓ 视频下载完成[/bold green] [dim]({size_mb:.1f} MB)[/dim]")
+                console.print(f"[bold green]+ 视频下载完成[/bold green] [dim]({size_mb:.1f} MB)[/dim]")
                 console.print(f"[dim]{v.output_path}[/dim]")
             elif payload.image:
                 img = payload.image
                 console.print()
                 console.print(
-                    f"[bold green]✓ 图集下载完成[/bold green] "
+                    f"[bold green]+ 图集下载完成[/bold green] "
                     f"[dim]({len(img.files)} 个文件, "
                     f"{img.size_bytes / 1024 / 1024:.1f} MB)[/dim]"
                 )
@@ -400,7 +400,7 @@ def download(
                 size_mb = bili.size_bytes / 1024 / 1024
                 console.print()
                 console.print(
-                    f"[bold green]✓ B 站下载完成[/bold green] "
+                    f"[bold green]+ B 站下载完成[/bold green] "
                     f"[dim]({len(bili.parts)} 个文件, {size_mb:.1f} MB)[/dim]"
                 )
                 for part in bili.parts:

@@ -51,6 +51,8 @@ _DEFAULT_UA = (
 
 def build_headers(cookie_string: str = "", user_agent: str = "", referer: str = "") -> dict:
     """Build HTTP headers for B站 API calls."""
+    # httpx enforces ASCII for header values; sanitise defensively so callers
+    # that pass raw shared-text blobs (with Chinese titles) don't crash.
     headers = {
         "User-Agent": user_agent or _DEFAULT_UA,
         "Accept": "application/json, text/plain, */*",
@@ -61,6 +63,7 @@ def build_headers(cookie_string: str = "", user_agent: str = "", referer: str = 
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Dest": "empty",
     }
+    headers = {k: _safe_str(v) for k, v in headers.items()}
     if cookie_string:
         headers["Cookie"] = cookie_string
     return headers
@@ -121,20 +124,42 @@ def _fetch_nav(cookie_string: str = "", user_agent: str = "") -> dict:
         try:
             response = client.get(NAV_URL)
         except httpx.RequestError as exc:
-            raise BilibiliAPIError(f"nav 接口请求失败: {exc}") from exc
+            # str(exc) may itself raise UnicodeEncodeError on Windows frozen
+            # builds if the underlying message contains non-ASCII characters.
+            # Coerce to a sanitised string before composing the BilibiliAPIError.
+            raise BilibiliAPIError(
+                "nav 接口请求失败: {}".format(_safe_str(exc))
+            ) from exc
     if response.status_code != 200:
         raise BilibiliAPIError(
-            f"nav 接口 HTTP {response.status_code}", code=response.status_code
+            "nav 接口 HTTP {}".format(response.status_code),
+            code=response.status_code,
         )
     try:
         payload = response.json()
     except Exception as exc:
-        raise BilibiliAPIError(f"nav 接口返回非 JSON: {exc}") from exc
+        raise BilibiliAPIError(
+            "nav 接口返回非 JSON: {}".format(_safe_str(exc))
+        ) from exc
     code = payload.get("code")
     if code != 0:
         message = payload.get("message", "未知错误")
-        raise BilibiliAPIError(f"nav 接口返回错误: {message} ({code})", code=code)
+        raise BilibiliAPIError(
+            "nav 接口返回错误: {} ({})".format(_safe_str(message), code),
+            code=code,
+        )
     return payload
+
+
+def _safe_str(obj) -> str:
+    """Return ``str(obj)`` with non-ASCII bytes replaced — defensive helper to
+    avoid UnicodeEncodeError on Windows frozen builds when ``str()`` produces
+    a string with characters outside the system code page."""
+    try:
+        s = str(obj)
+    except Exception:
+        return "<unprintable>"
+    return s.encode("ascii", errors="replace").decode("ascii")
 
 
 def fetch_wbi_keys(cookie_string: str = "", user_agent: str = "") -> tuple[str, str]:
@@ -169,7 +194,9 @@ def fetch_view(
     bv = extract_bv(url_or_bvid)
     av = extract_av(url_or_bvid)
     if not (bv or av):
-        raise BilibiliAPIError(f"无法从 URL 提取 BV/AV id: {url_or_bvid}")
+        raise BilibiliAPIError(
+            "无法从 URL 提取 BV/AV id: {}".format(_safe_str(url_or_bvid))
+        )
 
     img_key, sub_key = fetch_wbi_keys(cookie_string, user_agent)
 
@@ -180,27 +207,45 @@ def fetch_view(
         params["aid"] = av
 
     signed = wbi_sign(params, img_key, sub_key)
-    headers = build_headers(cookie_string, user_agent, referer=url_or_bvid)
+    # Header values must be ASCII — extract a clean URL to use as Referer.
+    # ``url_or_bvid`` may be a shared-text blob like "【中文标题】 https://...BV.."
+    # whose non-ASCII prefix would break httpx's _normalize_header_value.
+    referer = (
+        "https://www.bilibili.com/video/" + (bv or "av" + av)
+        if bv or av else url_or_bvid
+    )
+    headers = build_headers(cookie_string, user_agent, referer=referer)
     with httpx.Client(headers=headers, timeout=20.0) as c:
         try:
             r = c.get(VIEW_URL, params=signed)
         except httpx.RequestError as e:
-            raise BilibiliAPIError(f"view 接口请求失败: {e}") from e
+            raise BilibiliAPIError(
+                "view 接口请求失败: {}".format(_safe_str(e))
+            ) from e
     if r.status_code != 200:
-        raise BilibiliAPIError(f"view 接口 HTTP {r.status_code}", code=r.status_code)
+        raise BilibiliAPIError(
+            "view 接口 HTTP {}".format(r.status_code), code=r.status_code
+        )
     try:
         data = r.json()
     except Exception as e:
-        raise BilibiliAPIError(f"view 接口返回非 JSON: {e}") from e
+        raise BilibiliAPIError(
+            "view 接口返回非 JSON: {}".format(_safe_str(e))
+        ) from e
 
     code = data.get("code")
     if code == -101:
         raise BilibiliCookieExpiredError("B站 Cookie 缺失或已过期，请重新登录并推送")
     if code == -404:
-        raise BilibiliNotFoundError(f"视频不存在 (BV/AV: {bv or 'av' + av})", code=code)
+        raise BilibiliNotFoundError(
+            "视频不存在 (BV/AV: {})".format(_safe_str(bv) or "av" + _safe_str(av)),
+            code=code,
+        )
     if code != 0:
         msg = data.get("message", "未知错误")
-        raise BilibiliAPIError(f"view 接口错误: {msg} ({code})", code=code)
+        raise BilibiliAPIError(
+            "view 接口错误: {} ({})".format(_safe_str(msg), code), code=code
+        )
 
     return data
 
@@ -234,27 +279,40 @@ def fetch_playurl(
         "platform": "html5",
         "high_quality": "1",
     }
-    headers = build_headers(cookie_string, user_agent, referer=f"https://www.bilibili.com/video/{bvid}")
+    headers = build_headers(
+        cookie_string, user_agent,
+        referer="https://www.bilibili.com/video/{}".format(_safe_str(bvid)),
+    )
     with httpx.Client(headers=headers, timeout=20.0) as c:
         try:
             r = c.get(PLAYURL_URL, params=params)
         except httpx.RequestError as e:
-            raise BilibiliAPIError(f"playurl 接口请求失败: {e}") from e
+            raise BilibiliAPIError(
+                "playurl 接口请求失败: {}".format(_safe_str(e))
+            ) from e
     if r.status_code != 200:
-        raise BilibiliAPIError(f"playurl 接口 HTTP {r.status_code}", code=r.status_code)
+        raise BilibiliAPIError(
+            "playurl 接口 HTTP {}".format(r.status_code), code=r.status_code
+        )
     try:
         data = r.json()
     except Exception as e:
-        raise BilibiliAPIError(f"playurl 接口非 JSON: {e}") from e
+        raise BilibiliAPIError(
+            "playurl 接口非 JSON: {}".format(_safe_str(e))
+        ) from e
 
     code = data.get("code")
     if code == -101:
         raise BilibiliCookieExpiredError("B站 Cookie 过期，请重新登录并推送")
     if code == -404:
-        raise BilibiliNotFoundError(f"分 P 不存在 (cid={cid})", code=code)
+        raise BilibiliNotFoundError(
+            "分 P 不存在 (cid={})".format(cid), code=code
+        )
     if code != 0:
         msg = data.get("message", "未知错误")
-        raise BilibiliAPIError(f"playurl 接口错误: {msg} ({code})", code=code)
+        raise BilibiliAPIError(
+            "playurl 接口错误: {} ({})".format(_safe_str(msg), code), code=code
+        )
     return data
 
 

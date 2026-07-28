@@ -258,10 +258,10 @@ def main():
         except Exception as e:
             failures.append((t.__name__, e))
             continue
-        print(f"  ✓ {t.__name__}")
+        print(f"  + {t.__name__}")
     if failures:
         for name, e in failures:
-            print(f"  ✗ {name}: {type(e).__name__}: {e}")
+            print(f"  X {name}: {type(e).__name__}: {e}")
         raise SystemExit(1)
     print("ALL OK")
 
